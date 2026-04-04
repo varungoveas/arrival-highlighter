@@ -61,6 +61,39 @@ def make_annot(x0, top, x1, bottom, ph, color, popup=None):
     return a
 
 
+def merge_groups(travelling_together):
+    """Merge connected rooms into complete groups using union-find,
+    so every room shows ALL rooms in its group, not just direct links."""
+    all_rooms = set(travelling_together.keys())
+    for rooms in travelling_together.values():
+        all_rooms.update(rooms)
+    parent = {r: r for r in all_rooms}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    for room, linked in travelling_together.items():
+        for other in linked:
+            union(room, other)
+
+    groups = defaultdict(set)
+    for room in all_rooms:
+        groups[find(room)].add(room)
+
+    room_to_group = {}
+    for group in groups.values():
+        if len(group) > 1:
+            for room in group:
+                room_to_group[room] = sorted(group)  # include self
+    return room_to_group
+
+
 def highlight_pdf(pdf_bytes, enabled_cats):
     reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
@@ -168,6 +201,9 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                         travelling_together[b['room']].add(other_b['room'])
                         travelling_together[other_b['room']].add(b['room'])
 
+        # Merge all connected rooms into complete groups
+        room_to_group = merge_groups(travelling_together)
+
         # ══ PASS 3: highlight each page ══════════════════════════════════
         for pg_idx, page in enumerate(pdf.pages):
             ph       = float(page.height)
@@ -269,9 +305,9 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     if not name: continue
                     processed.add(rk)
 
-                    together = travelling_together.get(rw['text'], set())
+                    together = room_to_group.get(rw['text'], [])
                     popup = ('👥 Travelling Together with Room(s): ' +
-                             ', '.join(sorted(together))) if together else None
+                             ', '.join(together)) if together else None
 
                     hl(rw['x0'], rw['top'], rw['x1'], rw['bottom'], 'roomno', YELLOW, popup)
                     hl(min(w['x0'] for w in name), min(w['top'] for w in name),
