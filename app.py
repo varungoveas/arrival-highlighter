@@ -190,14 +190,39 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 for other_b in all_bookings:
                     if other_b['room'] == b['room'] and other_b['conf'] == b['conf']:
                         continue
+                    # Only link via conf number mentions in comments — room number
+                    # scanning causes false links from adjacent booking headers
                     if other_b['conf'] and re.search(
                             r'\b' + re.escape(other_b['conf']) + r'\b', comment_text):
                         travelling_together[b['room']].add(other_b['room'])
                         travelling_together[other_b['room']].add(b['room'])
-                    if (other_b['room'] in all_rooms
-                            and other_b['room'] != b['room']
-                            and re.search(r'\b' + re.escape(other_b['room']) + r'\b',
-                                          comment_text)):
+
+            # Also link rooms sharing the same T# ticket number in comments
+            t_refs = re.findall(r'T#\s*(\d{5,})', comment_text)
+            if t_refs:
+                for other_b in all_bookings:
+                    if other_b['room'] == b['room'] and other_b['conf'] == b['conf']:
+                        continue
+                    other_top_start = other_b['row_top'] + 20
+                    other_pg = pdf.pages[other_b['pg_idx']]
+                    other_ph = float(other_pg.height)
+                    other_words = [w for w in other_pg.extract_words(
+                        x_tolerance=2, y_tolerance=2) if w['top'] < other_ph * 0.91]
+                    other_page_bkgs = sorted(
+                        [bk for bk in all_bookings if bk['pg_idx'] == other_b['pg_idx']],
+                        key=lambda x: x['row_top'])
+                    other_idx = next((j for j, bk in enumerate(other_page_bkgs)
+                                      if bk['room'] == other_b['room']
+                                      and bk['conf'] == other_b['conf']), None)
+                    if other_idx is None: continue
+                    other_top_end = (other_page_bkgs[other_idx+1]['row_top']
+                                     if other_idx+1 < len(other_page_bkgs)
+                                     else other_ph * 0.91)
+                    other_comment = ' '.join(w['text'] for w in other_words
+                                             if other_top_start <= w['top'] <= other_top_end)
+                    other_t_refs = re.findall(r'T#\s*(\d{5,})', other_comment)
+                    # If they share at least one T# reference, link them
+                    if set(t_refs) & set(other_t_refs):
                         travelling_together[b['room']].add(other_b['room'])
                         travelling_together[other_b['room']].add(b['room'])
 
