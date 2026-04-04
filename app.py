@@ -652,9 +652,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     bflags.append('Multi-leg')
                 together = room_to_group.get(rw['text'], [])
                 if together:
-                    others = [r for r in together if r != rw['text']]
-                    if others:
-                        bflags.append(f"Together: {', '.join(others)}")
+                    bflags.append(f"Together: {', '.join(together)}")
 
                 # Note: first meaningful line of comment
                 comment_lines = [ln for ln in ct.split('  ') if len(ln.strip()) > 10]
