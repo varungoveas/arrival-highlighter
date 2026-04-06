@@ -537,6 +537,21 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                         hl(conf['x0'], conf['top'], conf['x1'], conf['bottom'],
                            'roomno', YELLOW, popup)
 
+                    # Orange highlight on conf line if no flight code found
+                    if enabled_cats.get('flight') and conf:
+                        conf_row = sorted([w for w in words
+                                           if abs(w['top'] - conf['top']) <= 3],
+                                          key=lambda x: x['x0'])
+                        conf_text = ' '.join(w['text'] for w in conf_row)
+                        has_flight = bool(re.search(
+                            r'\b(EK|EY|QR|G9|KU|GF|SQ|AI|6E|UL|OS|SU)\s*\d{3,4}\b'
+                            r'|^(RMV|OTH|Airport|FERRY|TRF)$',
+                            conf_text, re.I))
+                        if not has_flight:
+                            hl(conf['x0'], conf['top'],
+                               max(w['x1'] for w in conf_row), conf['bottom'],
+                               'flight', ORANGE, '⚠️ NO FLIGHT INFO — please check manually')
+
             if annots:
                 p = writer.pages[pg_idx]
                 if '/Annots' in p:
@@ -662,6 +677,8 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                         flight_str = flight_text  # no ETA concept for these
                     else:
                         flight_str = f"{flight_text} NO ETA"
+                else:
+                    flight_str = 'NO FLIGHT INFO'
 
                 # Arrival method: SBA/SBR/RMV/OTH/etc at x≈375-430
                 arr_method_w = next((w for w in conf_line_words
@@ -708,6 +725,9 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 d_match = re.search(r'D\$\s*([0-9]+(?:\.[0-9]+)?)', ct)
                 if d_match and float(d_match.group(1)) > 0:
                     bflags.append(f"D$ {d_match.group(1)}")
+                # No flight info
+                if not flight_text:
+                    bflags.append('No Flight Info')
                 # Early check-in / Late check-out — from Specials or notes
                 specials_m = re.search(r'Specials:\s*([A-Z0-9,]+)', ct)
                 specials_codes = specials_m.group(1).split(',') if specials_m else []
@@ -1227,7 +1247,8 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             if fl == 'comp': cats.append('comp')
             if 'child' in fl: cats.append('children')
         if g['flight'] and 'NO ETA' in g['flight']: cats.append('noeta')
-        if g['flight'] and g['flight'] not in ('', '--', '-'): cats.append('flight')
+        if g['flight'] and g['flight'] not in ('', '--', '-', 'NO FLIGHT INFO'): cats.append('flight')
+        if g['flight'] == 'NO FLIGHT INFO': cats.append('noflight')
 
         hl_lines = get_hl_lines_for_guest(g)
 
@@ -1265,8 +1286,9 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
                 if 'upgrade' in fl: cats_g.append('upgrade')
                 if fl == 'comp': cats_g.append('comp')
                 if 'child' in fl: cats_g.append('children')
-            if g.get('flight') and g['flight'] not in ('','--','-'): cats_g.append('flight')
+            if g.get('flight') and g['flight'] not in ('','--','-','NO FLIGHT INFO'): cats_g.append('flight')
             if g.get('flight') and 'NO ETA' in g.get('flight',''): cats_g.append('noeta')
+            if g.get('flight') == 'NO FLIGHT INFO': cats_g.append('noflight')
             if cat_key in cats_g:
                 seen.add(g['room'])
         return len(seen)
@@ -1275,6 +1297,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         ('rooms',      '🏠', 'Rooms',      summary_data['rooms'],      'all'),
         ('repeater',   '⭐', 'Repeaters',  count_rooms('repeater'),    'repeater'),
         ('flight',     '✈️', 'Flights',    count_rooms('flight'),      'flight'),
+        ('noflight',   '❓', 'No Flight',  len([g for g in guests if g.get('flight') == 'NO FLIGHT INFO']), 'noflight'),
         ('membership', '👑', 'GHA',        count_rooms('membership'),  'membership'),
         ('vip',        '💎', 'VIP',        count_rooms('vip'),         'vip'),
         ('complaint',  '⚠️', 'Complaints', count_rooms('complaint'),   'complaint'),
@@ -1488,6 +1511,9 @@ const FLAG_COLORS = {{
   'Honeymoon':'#EEEDFE:#26215C','Anniversary':'#EEEDFE:#26215C',
   'Birthday':'#EEEDFE:#26215C','Wedding':'#EEEDFE:#26215C','Babymoon':'#EEEDFE:#26215C',
   'RPT':'#E1F5EE:#04342C','Repeat':'#E1F5EE:#04342C','time RPT':'#E1F5EE:#04342C',
+  'Early Check-in':'#E1F5EE:#04342C','Late Check-out':'#FAEEDA:#633806',
+  'Upgrade':'#E6F1FB:#042C53','Comp':'#FBEAF0:#72243E','Child':'#FAEEDA:#633806',
+  'No Flight Info':'#FCEBEB:#501313',
 }};
 
 function flagColor(f) {{
@@ -1542,10 +1568,9 @@ function saveNote(el) {{
   }}
 }}
 
-function styleNote(el, original) {{}} // no longer needed - kept for compatibility
+function styleNote(el, original) {{}} // no longer needed
 
 function downloadPDF() {{
-  // Hide non-printable elements, print, then restore
   const style = document.createElement('style');
   style.id = 'print-style';
   style.textContent = `
@@ -1602,22 +1627,17 @@ function goToBooking(anchor, flagCat, hlLines) {{
       void el.offsetWidth;
       el.classList.add('booking-flash');
     }}
-    // Collect IDs to flash: always include booking header lines + category-specific lines
     let idsToFlash = [];
     if (hlLines) {{
-      // Always add the booking header lines
       if (hlLines['booking']) idsToFlash = [...hlLines['booking']];
-      // Add category-specific lines (avoiding duplicates)
       if (flagCat && hlLines[flagCat]) {{
         hlLines[flagCat].forEach(id => {{ if (!idsToFlash.includes(id)) idsToFlash.push(id); }});
       }}
     }}
     if (idsToFlash.length) {{
       flashHlLines(idsToFlash);
-      // Scroll to first category-specific line (not the header)
       setTimeout(() => {{
         const catIds = (flagCat && hlLines && hlLines[flagCat]) ? hlLines[flagCat] : idsToFlash;
-        // Find first non-anchor id to scroll to
         const targetId = catIds.find(id => !id.startsWith('anchor-')) || catIds[0];
         const targetEl = document.querySelector(`[data-hlid="${{targetId}}"]`);
         if (targetEl) targetEl.scrollIntoView({{behavior:'smooth', block:'center'}});
@@ -1630,7 +1650,6 @@ function render(filterCat) {{
   currentFilter = filterCat;
   const tbody = document.getElementById('tbody');
   tbody.innerHTML = '';
-  // Clear persistent flash intervals
   rowFlashIntervals.forEach(id => clearInterval(id));
   rowFlashIntervals = [];
   let shown = 0;
@@ -1642,6 +1661,9 @@ function render(filterCat) {{
 
     const flightHtml = g.flight && g.flight !== '--' && g.flight !== '-' && g.flight !== ''
       ? (() => {{
+          if (g.flight === 'NO FLIGHT INFO') {{
+            return `<span class="flight-badge noeta">❓ No Flight Info</span>`;
+          }}
           const isTransport = /^(RMV|OTH|Airport|FERRY|TRF)$/i.test(g.flight.trim());
           const noEta = !isTransport && g.flight.includes('NO ETA');
           const parts = g.flight.replace(' NO ETA','').trim().split(' ');
@@ -1681,6 +1703,7 @@ function render(filterCat) {{
       else if (/upgrade/.test(fl)) cat='upgrade';
       else if (/^comp$/.test(fl)) cat='comp';
       else if (/child/.test(fl)) cat='children';
+      else if (/no flight info/.test(fl)) cat='noflight';
       else if (/ek|ey|qr|g9|ku|gf|sq|ai|6e/.test(fl)) cat='flight';
       return `<span class="flag" style="${{flagColor(f)}}" title="Jump to related lines in report"
         onclick="goToBooking('${{g.anchor}}','${{cat}}',HLMAP['${{g.anchor}}'])">${{f}}</span>`;
@@ -1702,7 +1725,6 @@ function render(filterCat) {{
         ></textarea>
       </td>`;
     tbody.appendChild(tr);
-    // Load saved manual note from localStorage
     const noteEl = tr.querySelector('.note-manual-field');
     if (noteEl) {{
       const saved = localStorage.getItem(noteEl.dataset.key);
@@ -1711,7 +1733,6 @@ function render(filterCat) {{
 
     if (match) {{
       shown++;
-      // Persistent flash while category is active
       if (filterCat !== 'all') {{
         let flashOn = true;
         tr.style.background = '#FFFDE7';
@@ -1734,7 +1755,6 @@ function render(filterCat) {{
 
 function filterGuests(cat) {{
   if (currentFilter === cat) cat = 'all';
-  // Stop any running flash intervals immediately
   rowFlashIntervals.forEach(id => clearInterval(id));
   rowFlashIntervals = [];
   document.querySelectorAll('#tbody tr').forEach(tr => tr.style.background = '');
@@ -1745,7 +1765,9 @@ function filterGuests(cat) {{
     'all':'All Bookings','repeater':'Repeater Guests','flight':'Flights',
     'membership':'GHA Members','vip':'VIP Guests','complaint':'Complaints / Glitches',
     'allergy':'Allergies / Dietary','occasion':'Special Occasions','payment':'Payments to Collect',
-    'dbalance':'D$ Balance','together':'Travelling Together','legs':'Multi-Villa Legs','noeta':'Missing ETA'
+    'dbalance':'D$ Balance','together':'Travelling Together','legs':'Multi-Villa Legs','noeta':'Missing ETA',
+    'eci':'Early Check-in','lco':'Late Check-out','upgrade':'Upgrades','comp':'Complimentary','children':'With Children',
+    'noflight':'No Flight Info'
   }};
   document.getElementById('filter-tag').textContent = labels[cat] || cat;
   render(cat);
@@ -1854,13 +1876,13 @@ with col_right:
                     col_a, col_b = st.columns(2)
                     with col_a:
                         st.download_button(
-                            label=f"⬇️ Download Highlighted PDF",
+                            label="⬇️ Download Highlighted PDF",
                             data=r['bytes'], file_name=r['name'],
                             mime='application/pdf', use_container_width=True,
                             key=f"dl_{r['name']}")
                     with col_b:
                         st.download_button(
-                            label=f"🌐 Download Interactive Summary",
+                            label="🌐 Download Interactive Summary",
                             data=r['html'], file_name=r['html_name'],
                             mime='text/html', use_container_width=True,
                             key=f"html_{r['html_name']}")
