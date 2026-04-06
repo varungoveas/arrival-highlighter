@@ -555,7 +555,8 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 # Get full line
                 t = w['top']
                 line_words = sorted([x for x in first_page_words if abs(x['top']-t)<=3], key=lambda x: x['x0'])
-                property_name = ' '.join(x['text'] for x in line_words)
+                property_name = ' '.join(x['text'] for x in line_words
+                                         if not re.match(r'\d{2}/\d{2}/\d{2}', x['text']))
                 break
         # Find arrival date from report
         for w in first_page_words:
@@ -618,23 +619,55 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 # Flight + ETA + arrival method on conf sub-row
                 conf_line_words = sorted([w for w in words if w['top'] > t+3 and w['top'] < t+25],
                                          key=lambda x: x['x0'])
+
+                # Flight: standard combined (GF144, 6E1133) or split (EK + 656, AI + 239)
+                flight_text = ''
+                flight_top  = None
                 flight_w = next((w for w in conf_line_words
-                                 if w['x0'] > 280 and w['x0'] < 420
-                                 and re.match(r'^[A-Z0-9]{2,3}\s*\d{3,4}$', w['text'].replace(' ',''))), None)
-                flight_str = ''
+                                 if 280 < w['x0'] < 380
+                                 and re.match(r'^[A-Z0-9]{2,3}\d{2,4}$', w['text'])), None)
                 if flight_w:
+                    flight_text = flight_w['text']
+                    flight_top  = flight_w['top']
+                else:
+                    # Split: two-letter alpha code immediately followed by digit-only word
+                    code_w = next((w for w in conf_line_words if 280 < w['x0'] < 360
+                                   and re.match(r'^[A-Z]{2,3}$', w['text'])), None)
+                    if code_w:
+                        num_w = next((w for w in conf_line_words
+                                      if abs(w['top'] - code_w['top']) <= 3
+                                      and code_w['x0'] < w['x0'] < code_w['x0'] + 35
+                                      and re.match(r'^\d{2,4}$', w['text'])), None)
+                        if num_w:
+                            flight_text = f"{code_w['text']}{num_w['text']}"
+                            flight_top  = code_w['top']
+
+                # Non-flight transport codes at flight position
+                if not flight_text:
+                    trans_w = next((w for w in conf_line_words
+                                    if 280 < w['x0'] < 380
+                                    and re.match(r'^(RMV|OTH|Airport|FERRY|TRF)$', w['text'], re.I)), None)
+                    if trans_w:
+                        flight_text = trans_w['text']
+                        flight_top  = trans_w['top']
+
+                flight_str = ''
+                if flight_text:
                     eta_w = next((w for w in conf_line_words
-                                  if abs(w['top'] - flight_w['top']) <= 3
+                                  if flight_top and abs(w['top'] - flight_top) <= 3
                                   and re.match(r'^([01]?\d|2[0-3]):[0-5]\d$', w['text'])), None)
                     if eta_w:
-                        flight_str = f"{flight_w['text']} {eta_w['text']}"
+                        flight_str = f"{flight_text} {eta_w['text']}"
+                    elif re.match(r'^(RMV|OTH|Airport|FERRY|TRF)$', flight_text, re.I):
+                        flight_str = flight_text  # no ETA concept for these
                     else:
-                        flight_str = f"{flight_w['text']} NO ETA"
+                        flight_str = f"{flight_text} NO ETA"
 
-                # Arrival method: SBA/SBR/etc at x≈380-420 on conf line
+                # Arrival method: SBA/SBR/RMV/OTH/etc at x≈375-430
                 arr_method_w = next((w for w in conf_line_words
                                      if 375 <= w['x0'] <= 430
-                                     and re.match(r'^S[A-Z]{2}$', w['text'])), None)
+                                     and re.match(r'^[A-Z]{2,4}$', w['text'])
+                                     and w['text'] not in ('VIP',)), None)
                 arr_method = arr_method_w['text'] if arr_method_w else ''
 
                 # Collect flags for this booking
@@ -675,6 +708,23 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 d_match = re.search(r'D\$\s*([0-9]+(?:\.[0-9]+)?)', ct)
                 if d_match and float(d_match.group(1)) > 0:
                     bflags.append(f"D$ {d_match.group(1)}")
+                # Early check-in / Late check-out — from Specials or notes
+                specials_m = re.search(r'Specials:\s*([A-Z0-9,]+)', ct)
+                specials_codes = specials_m.group(1).split(',') if specials_m else []
+                if 'ECI' in specials_codes or re.search(r'\bECI\b', ct):
+                    bflags.append('Early Check-in')
+                if 'LCO' in specials_codes or re.search(r'\bLCO\b', ct):
+                    bflags.append('Late Check-out')
+                # Upgrade
+                if 'UPG' in specials_codes or re.search(r'\bupgrade\b', ct, re.I):
+                    bflags.append('Upgrade')
+                # Complimentary
+                if re.search(r'\bCOMP\b|complimentary', ct, re.I):
+                    bflags.append('Comp')
+                # Children
+                chl_w = next((w for w in row if 437 <= w['x0'] <= 460 and w['text'].isdigit()), None)
+                if chl_w and int(chl_w['text']) > 0:
+                    bflags.append(f"Child ×{chl_w['text']}")
                 together = room_to_group.get(rw['text'], [])
                 if together:
                     bflags.append(f"Together: {', '.join(together)}")
@@ -1106,7 +1156,32 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             'legs':       ['leg','1st leg','2nd leg'],
             'dbalance':   ['d$'],
             'flight':     ['ek ','ey ','qr ','g9 ','ku ','gf ','sq ','ai ','6e ','ek\t','ey\t'],
+            'eci':        ['eci'],
+            'lco':        ['lco'],
+            'upgrade':    ['upg','upgrade'],
+            'comp':       ['comp'],
+            'children':   ['child','chl','infant','baby','kids'],
         }
+
+        # Assign synthetic hl_ids to non-highlighted lines that contain new flag keywords
+        # so they can be flashed even without a PDF highlight
+        new_flag_kws = {
+            'eci':     ['eci'],
+            'lco':     ['lco'],
+            'upgrade': ['upg','upgrade'],
+            'comp':    ['comp'],
+            'children':['child','chl'],
+        }
+        for line in booking_block['lines']:
+            if line.get('hl_id'):
+                continue  # already has one
+            txt = line['text'].lower()
+            for cat, kws in new_flag_kws.items():
+                if any(kw in txt for kw in kws):
+                    # Give it a synthetic hl_id so JS can find and flash it
+                    synth_id = f"flag-{cat}-{line['pg']}-{int(line['top'])}"
+                    line['hl_id'] = synth_id
+                    break  # one id per line is enough
 
         for line in booking_block['lines']:
             if not line.get('hl_id'):
@@ -1144,8 +1219,13 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             if 'collect' in fl or 'payment' in fl: cats.append('payment')
             if any(x in fl for x in ['honeymoon','anniversary','birthday','wedding','babymoon','proposal','engagement']): cats.append('occasion')
             if 'together' in fl: cats.append('together')
-            if 'leg' in fl: cats.append('legs')
+            if 'multi-leg' in fl or ('leg' in fl and 'multi' in fl): cats.append('legs')
             if 'd$' in fl: cats.append('dbalance')
+            if 'early check-in' in fl: cats.append('eci')
+            if 'late check-out' in fl: cats.append('lco')
+            if 'upgrade' in fl: cats.append('upgrade')
+            if fl == 'comp': cats.append('comp')
+            if 'child' in fl: cats.append('children')
         if g['flight'] and 'NO ETA' in g['flight']: cats.append('noeta')
         if g['flight'] and g['flight'] not in ('', '--', '-'): cats.append('flight')
 
@@ -1178,8 +1258,13 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
                 if 'collect' in fl or 'payment' in fl: cats_g.append('payment')
                 if any(x in fl for x in ['honeymoon','anniversary','birthday','wedding','babymoon','proposal','engagement']): cats_g.append('occasion')
                 if 'together' in fl: cats_g.append('together')
-                if 'leg' in fl: cats_g.append('legs')
+                if 'multi-leg' in fl or ('leg' in fl and 'multi' in fl): cats_g.append('legs')
                 if 'd$' in fl: cats_g.append('dbalance')
+                if 'early check-in' in fl: cats_g.append('eci')
+                if 'late check-out' in fl: cats_g.append('lco')
+                if 'upgrade' in fl: cats_g.append('upgrade')
+                if fl == 'comp': cats_g.append('comp')
+                if 'child' in fl: cats_g.append('children')
             if g.get('flight') and g['flight'] not in ('','--','-'): cats_g.append('flight')
             if g.get('flight') and 'NO ETA' in g.get('flight',''): cats_g.append('noeta')
             if cat_key in cats_g:
@@ -1198,6 +1283,11 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         ('payment',    '💳', 'Payment',    count_rooms('payment'),     'payment'),
         ('dbalance',   '💰', 'D$ Balance', count_rooms('dbalance'),    'dbalance'),
         ('together',   '👥', 'Together',   len(set(g['room'] for g in guests if any('Together' in f for f in g['flags']))), 'together'),
+        ('eci',        '🌅', 'Early CI',   len([g for g in guests if any('Early Check-in' in f for f in g['flags'])]), 'eci'),
+        ('lco',        '🌙', 'Late CO',    len([g for g in guests if any('Late Check-out' in f for f in g['flags'])]), 'lco'),
+        ('upgrade',    '⬆️', 'Upgrade',    len([g for g in guests if any('Upgrade' in f for f in g['flags'])]), 'upgrade'),
+        ('comp',       '🎁', 'Comp',       len([g for g in guests if any('Comp' in f for f in g['flags'])]), 'comp'),
+        ('children',   '👶', 'Children',   len([g for g in guests if any('Child' in f for f in g['flags'])]), 'children'),
     ]
     stat_cards = ''
     for sid, icon, label, val, cat in stat_items:
@@ -1270,7 +1360,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
 .header{{background:#1a1a2e;color:#fff;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}}
 .header h1{{font-size:17px;font-weight:700}}
 .header-sub{{font-size:11px;color:#94a3b8;margin-top:2px}}
-.property{{font-size:11px;color:#94a3b8;text-align:right}}
+.property{{font-size:17px;font-weight:700;color:#fff;text-align:right}}
 .nav-tabs{{display:flex;gap:0;background:#f1f5f9;border-bottom:2px solid #e2e8f0}}
 .nav-tab{{padding:10px 28px;font-size:13px;font-weight:600;color:#6b7280;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;user-select:none}}
 .nav-tab.active{{color:#1a56db;border-bottom-color:#1a56db;background:#fff}}
@@ -1295,7 +1385,9 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
 table{{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}}
 th{{background:#f8fafc;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;padding:9px 11px;text-align:left;border-bottom:1px solid #e2e8f0}}
 th:last-child{{width:45%}}
-td{{padding:8px 11px;border-bottom:0.5px solid #f1f5f9;vertical-align:top}}
+td{{padding:9px 11px;border-bottom:1.5px solid #e2e8f0;vertical-align:top}}
+tbody tr:nth-child(even){{background:#fafbfd}}
+tbody tr:hover{{background:#f0f7ff!important}}
 td:last-child{{width:45%;min-width:300px}}
 tr:last-child td{{border-bottom:none}}
 tr.dimmed{{opacity:.2;transition:opacity .2s}}
@@ -1550,13 +1642,16 @@ function render(filterCat) {{
 
     const flightHtml = g.flight && g.flight !== '--' && g.flight !== '-' && g.flight !== ''
       ? (() => {{
-          const noEta = g.flight.includes('NO ETA');
+          const isTransport = /^(RMV|OTH|Airport|FERRY|TRF)$/i.test(g.flight.trim());
+          const noEta = !isTransport && g.flight.includes('NO ETA');
           const parts = g.flight.replace(' NO ETA','').trim().split(' ');
           const flightNo = parts[0];
-          const eta = parts.length > 1 && !noEta ? parts[1] : '';
+          const eta = parts.length > 1 && !noEta && !isTransport ? parts[1] : '';
           const method = g.arr_method || '';
           let badge = '';
-          if (noEta) {{
+          if (isTransport) {{
+            badge = `<span class="flight-badge" style="background:#f1f5f9;color:#475569">${{flightNo}}</span>`;
+          }} else if (noEta) {{
             badge = `<span class="flight-badge noeta">${{flightNo}} <span style="font-size:10px;opacity:.85">⚠️ No ETA</span></span>`;
           }} else if (eta) {{
             badge = `<span class="flight-badge">${{flightNo}} <span style="font-size:10px;color:#166534;background:#dcfce7;padding:1px 5px;border-radius:8px;margin-left:2px">🕐 ${{eta}}</span></span>`;
@@ -1569,7 +1664,6 @@ function render(filterCat) {{
       : '<span style="color:#cbd5e1">—</span>';
 
     const flagsHtml = g.flags.map(f => {{
-      // Map flag text to category key
       const fl = f.toLowerCase();
       let cat = 'roomno';
       if (/platinum|titanium|gold|silver|red/.test(fl)) cat='membership';
@@ -1580,8 +1674,13 @@ function render(filterCat) {{
       else if (/collect|payment/.test(fl)) cat='payment';
       else if (/honeymoon|anniversary|birthday|wedding|babymoon|proposal/.test(fl)) cat='occasion';
       else if (/together/.test(fl)) cat='together';
-      else if (/leg/.test(fl)) cat='legs';
+      else if (/multi-leg|leg/.test(fl)) cat='legs';
       else if (fl.includes('d$')) cat='dbalance';
+      else if (/early check-in/.test(fl)) cat='eci';
+      else if (/late check-out/.test(fl)) cat='lco';
+      else if (/upgrade/.test(fl)) cat='upgrade';
+      else if (/^comp$/.test(fl)) cat='comp';
+      else if (/child/.test(fl)) cat='children';
       else if (/ek|ey|qr|g9|ku|gf|sq|ai|6e/.test(fl)) cat='flight';
       return `<span class="flag" style="${{flagColor(f)}}" title="Jump to related lines in report"
         onclick="goToBooking('${{g.anchor}}','${{cat}}',HLMAP['${{g.anchor}}'])">${{f}}</span>`;
