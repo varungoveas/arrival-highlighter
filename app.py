@@ -530,6 +530,15 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     if any(kw.lower() in ln['text'].lower() for kw in kws):
                         hl_line(ln, cat_id)
 
+            # Highlight Specials lines that contain occasion codes
+            if enabled_cats.get('occasion'):
+                _OCC_CODES = {'HON','HMB','HMA','WED','BDC','BEN','BTD','ANN'}
+                for ln in lines:
+                    if re.match(r'Specials:', ln['text'], re.I):
+                        codes = set(re.findall(r'[A-Z0-9]{2,4}', ln['text']))
+                        if codes & _OCC_CODES:
+                            hl_line(ln, 'occasion')
+
             # Auto patterns
             for ln in lines:
                 t = ln['text']
@@ -756,6 +765,10 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                              else ph * 0.91)
                 ct = ' '.join(w['text'] for w in words if top_start <= w['top'] <= top_end)
 
+                # Full name + TA text for title/allergy scanning
+                name_text = ' '.join(w['text'] for w in row if 41 <= w['x0'] <= 280)
+                ta_full   = ta_name  # already extracted above
+
                 if re.search(r'Membership\s+Level\s+(GOLD|PLATINUM|TITANIUM|RED|SILVER)', ct, re.I):
                     m = re.search(r'Membership\s+Level\s+(\w+)', ct, re.I)
                     if m: bflags.append(m.group(1).capitalize())
@@ -767,12 +780,47 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 if re.search(r'\d+(st|nd|rd|th)\s+[Tt]ime\s+RPT|\bRPT\b', ct):
                     m = re.search(r'(\d+(?:st|nd|rd|th)\s+[Tt]ime\s+RPT|\bRPT\b)', ct)
                     if m: bflags.append(m.group(1))
+
+                # ── Improvement 6: Repeat guest from stay history ────────
+                _stays_m = re.search(r'Total stays across chain\s*(\d+)', ct)
+                if _stays_m and int(_stays_m.group(1)) > 1:
+                    if not any('RPT' in f or 'Repeat' in f for f in bflags):
+                        bflags.append(f"RPT ({_stays_m.group(1)} stays)")
+
+                # ── Occasions: text scan ─────────────────────────────────
                 for kw in ['birthday','anniversary','honeymoon','babymoon','wedding','proposal','engagement']:
                     if kw in ct.lower(): bflags.append(kw.capitalize()); break
+
+                # ── Improvement 5: Special occasion codes from Specials ──
+                specials_m = re.search(r'Specials:\s*([A-Z0-9,]+)', ct)
+                specials_codes = specials_m.group(1).split(',') if specials_m else []
+                _OCCASION_CODES = {
+                    'HON':'Honeymoon', 'HMB':'Honeymoon Setup',
+                    'HMA':'Honeymoon Amenity', 'WED':'Wedding',
+                    'BDC':'Birthday Cake', 'BEN':'Birthday Amenity',
+                    'BTD':'Birthday Decoration', 'ANN':'Anniversary',
+                }
+                for _code, _label in _OCCASION_CODES.items():
+                    if _code in specials_codes:
+                        if not any(_label.split()[0].lower() in f.lower() for f in bflags):
+                            bflags.append(_label)
+                        break
+
+                # ── Allergy: notes text ──────────────────────────────────
                 for kw in ['allerg','shellfish','gluten','peanut','lactose','vegan','vegetarian','halal']:
                     if kw in ct.lower():
                         m = re.search(r'(\w*' + kw + r'\w*)', ct, re.I)
                         bflags.append(m.group(1).capitalize() if m else 'Allergy'); break
+
+                # ── Improvement 4: Allergy keyword in name field ─────────
+                if not any('llerg' in f.lower() or any(x in f.lower() for x in
+                           ['shellfish','gluten','peanut','lactose','vegan','halal'])
+                           for f in bflags):
+                    for kw in ['allerg','shellfish','gluten','peanut','lactose','vegan','halal','nut','dairy']:
+                        if kw in name_text.lower():
+                            bflags.append(f'Allergy (name field)')
+                            break
+
                 if re.search(r'complaint|glitch|feedback|upset', ct, re.I):
                     bflags.append('Complaint')
                 if re.search(r'collect upon arrival|to be collected|pls collect|please collect', ct, re.I):
@@ -786,7 +834,8 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 # No flight info
                 if not flight_text:
                     bflags.append('No Flight Info')
-                # Potential VIP — title mentioned in notes but no VIP level in system
+
+                # ── Potential VIP — improved: check notes, name, TA ─────
                 _VIP_ALREADY = any('VIP' in f or f in ('Platinum','Titanium','Gold','Silver','Red')
                                    for f in bflags)
                 if not _VIP_ALREADY:
@@ -795,18 +844,32 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                         r'\bHRH\b', r'His\s+Excellency', r'Her\s+Excellency', r'\bH\.E\.\b',
                         r'Vice\s+President', r'Vice\s+Pres\b',
                         r'Managing\s+Director',
-                        r'\bAmbassador\b',
-                        r'Prime\s+Minister',
+                        r'\bAmbassador\b', r'Prime\s+Minister',
                         r'\bGovernor\b', r'\bSenator\b',
+                        # ── Improvement 2: TA/company signals ────────────
+                        r'Royal\s+Household', r'Embassy\s+of', r'Ministry\s+of',
+                        r"Prime\s+Minister'?s?\s+Office",
+                        r'State\s+Department', r'Presidential',
+                        r'Minister\s+of',r'Deputy\s+Minister',r'State\s+Minister',
                     ]
-                    for _pat in _VIP_TITLE_PATS:
-                        _m = re.search(_pat, ct, re.I)
-                        if _m:
-                            bflags.append(f'Potential VIP ({_m.group()})')
-                            break
-                # Early check-in / Late check-out — from Specials or notes
-                specials_m = re.search(r'Specials:\s*([A-Z0-9,]+)', ct)
-                specials_codes = specials_m.group(1).split(',') if specials_m else []
+                    # ── Improvement 1: scan name field + TA field too ────
+                    _scan_texts = [
+                        ('notes', ct),
+                        ('name',  name_text),
+                        ('TA',    ta_full),
+                    ]
+                    for _src, _txt in _scan_texts:
+                        for _pat in _VIP_TITLE_PATS:
+                            _m = re.search(_pat, _txt, re.I)
+                            if _m:
+                                _label = _m.group().strip()
+                                bflags.append(f'Potential VIP ({_label})')
+                                break
+                        else:
+                            continue
+                        break
+
+                # Early check-in / Late check-out
                 if 'ECI' in specials_codes or re.search(r'\bECI\b', ct):
                     bflags.append('Early Check-in')
                 if 'LCO' in specials_codes or re.search(r'\bLCO\b', ct):
@@ -814,8 +877,11 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 # Upgrade
                 if 'UPG' in specials_codes or re.search(r'\bupgrade\b', ct, re.I):
                     bflags.append('Upgrade')
-                # Complimentary
-                if re.search(r'\bCOMP\b|complimentary', ct, re.I):
+                # ── Improvement 3: COMP — distinguish package vs standalone
+                _comp_standalone = bool(re.search(r'(?<![A-Z/])\bCOMP\b(?![/A-Z])', ct))
+                _comp_specials   = 'COMP' in specials_codes
+                _comp_phrase     = bool(re.search(r'complimentary\s+(?:stay|room|night|upgrade)', ct, re.I))
+                if _comp_specials or _comp_standalone or _comp_phrase:
                     bflags.append('Comp')
                 # Children
                 chl_w = next((w for w in row if 437 <= w['x0'] <= 460 and w['text'].isdigit()), None)
