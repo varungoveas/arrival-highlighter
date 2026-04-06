@@ -963,44 +963,18 @@ def highlight_pdf(pdf_bytes, enabled_cats):
         DPI   = 120
         SCALE = DPI / 72.0  # 1pt = 1.667px at 120dpi
 
-        # Collect highlight rects per page from Pass 3 data
-        # Re-use the highlighted_tops we computed — but we need per-page rects
-        # Rebuild from all_raw_lines in blocks
-        hl_rects_by_pg = defaultdict(list)  # pg → list of (x0,y0,x1,y1,color)
-        for block in blocks:
-            for line in block['lines']:
-                if line.get('highlighted') and line.get('pg') is not None:
-                    pg  = line['pg']
-                    top = line['top']
-                    col = line.get('color','yellow')
-                    # Full-width highlight rect at this line's y
-                    hl_rects_by_pg[pg].append((0, top, 792, top + 9.5, col))
-
         page_images = []  # list of {'pg', 'b64', 'width_px', 'height_px', 'anchors'}
         for pg_idx, page in enumerate(pdf.pages):
             ph = float(page.height)
             pw = float(page.width)
 
-            # Render page
+            # Render clean page — no highlight overlay
+            # Interactive glow handles highlighting, PDF has the yellow
             img_obj  = page.to_image(resolution=DPI)
-            pil_img  = img_obj.original.convert('RGBA')
+            pil_img  = img_obj.original.convert('RGB')
             iw, ih   = pil_img.size
-
-            # Draw highlight overlays
-            draw = _PILDraw.Draw(pil_img, 'RGBA')
-            for (x0, y0, x1, y1, col) in hl_rects_by_pg.get(pg_idx, []):
-                px0 = int(x0 * SCALE)
-                py0 = int(y0 * SCALE)
-                px1 = int(x1 * SCALE)
-                py1 = int(y1 * SCALE) + 2
-                rgba = (255, 245, 80, 130) if col == 'yellow' else (255, 165, 50, 130)
-                draw.rectangle([px0, py0, px1, py1], fill=rgba)
-
-            # Convert to RGB JPEG
-            bg = _PILImage.new('RGB', pil_img.size, (255,255,255))
-            bg.paste(pil_img, mask=pil_img.split()[3])
             buf = io.BytesIO()
-            bg.save(buf, format='JPEG', quality=75)
+            pil_img.save(buf, format='JPEG', quality=75)
             b64 = _b64mod.b64encode(buf.getvalue()).decode()
 
             # Collect anchor positions — one per booking, use the room/name line (x0<40)
