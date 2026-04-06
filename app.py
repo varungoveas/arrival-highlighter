@@ -499,6 +499,16 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 if enabled_cats.get('earlyarr') and re.search(r'0[0-8]:\d{2}', t) \
                         and not re.search(r'Arrival\s+Time', t, re.I):
                     hl_line(ln, 'earlyarr')
+                # Potential VIP — title in notes, no VIP code on room/conf row
+                if enabled_cats.get('vip'):
+                    _vip_title_pat = (
+                        r'\bCEO\b|\bCOO\b|\bCFO\b|\bCTO\b|\bCMO\b|\bHRH\b'
+                        r'|His\s+Excellency|Her\s+Excellency|\bH\.E\.\b'
+                        r'|Vice\s+President|Managing\s+Director'
+                        r'|\bAmbassador\b|Prime\s+Minister|\bGovernor\b|\bSenator\b'
+                    )
+                    if re.search(_vip_title_pat, t, re.I):
+                        hl_line(ln, 'vip', ORANGE, '⚑ Potential VIP — title mentioned in notes')
 
             # Room / Name / Conf No — skip sharers entirely
             if enabled_cats.get('roomno'):
@@ -713,6 +723,24 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 # No flight info
                 if not flight_text:
                     bflags.append('No Flight Info')
+                # Potential VIP — title mentioned in notes but no VIP level in system
+                _VIP_ALREADY = any('VIP' in f or f in ('Platinum','Titanium','Gold','Silver','Red')
+                                   for f in bflags)
+                if not _VIP_ALREADY:
+                    _VIP_TITLE_PATS = [
+                        r'\bCEO\b', r'\bCOO\b', r'\bCFO\b', r'\bCTO\b', r'\bCMO\b',
+                        r'\bHRH\b', r'His\s+Excellency', r'Her\s+Excellency', r'\bH\.E\.\b',
+                        r'Vice\s+President', r'Vice\s+Pres\b',
+                        r'Managing\s+Director',
+                        r'\bAmbassador\b',
+                        r'Prime\s+Minister',
+                        r'\bGovernor\b', r'\bSenator\b',
+                    ]
+                    for _pat in _VIP_TITLE_PATS:
+                        _m = re.search(_pat, ct, re.I)
+                        if _m:
+                            bflags.append(f'Potential VIP ({_m.group()})')
+                            break
                 # Early check-in / Late check-out — from Specials or notes
                 specials_m = re.search(r'Specials:\s*([A-Z0-9,]+)', ct)
                 specials_codes = specials_m.group(1).split(',') if specials_m else []
@@ -1303,6 +1331,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             if fl == 'comp': cats.append('comp')
             if 'child' in fl: cats.append('children')
             if 'long stay' in fl: cats.append('longstay')
+            if 'potential vip' in fl: cats.append('potvip')
         if g['flight'] and 'NO ETA' in g['flight']: cats.append('noeta')
         if g['flight'] and g['flight'] not in ('', '--', '-', 'NO FLIGHT INFO'): cats.append('flight')
         if g['flight'] == 'NO FLIGHT INFO': cats.append('noflight')
@@ -1350,6 +1379,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
                 if fl == 'comp': cats_g.append('comp')
                 if 'child' in fl: cats_g.append('children')
                 if 'long stay' in fl: cats_g.append('longstay')
+                if 'potential vip' in fl: cats_g.append('potvip')
             if g.get('flight') and g['flight'] not in ('','--','-','NO FLIGHT INFO'): cats_g.append('flight')
             if g.get('flight') and 'NO ETA' in g.get('flight',''): cats_g.append('noeta')
             if g.get('flight') == 'NO FLIGHT INFO': cats_g.append('noflight')
@@ -1376,6 +1406,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         ('comp',       '🎁', 'Comp',       len([g for g in guests if any('Comp' in f for f in g['flags'])]), 'comp'),
         ('children',   '👶', 'Children',   len([g for g in guests if any('Child' in f for f in g['flags'])]), 'children'),
         ('longstay',   '🌴', 'Long Stay',  len([g for g in guests if any('Long Stay' in f for f in g['flags'])]), 'longstay'),
+        ('potvip',     '⚑',  'Pot. VIP',   len([g for g in guests if any('Potential VIP' in f for f in g['flags'])]), 'potvip'),
     ]
     stat_cards = ''
     for sid, icon, label, val, cat in stat_items:
@@ -1580,6 +1611,7 @@ const FLAG_COLORS = {{
   'Upgrade':'#E6F1FB:#042C53','Comp':'#FBEAF0:#72243E','Child':'#FAEEDA:#633806',
   'No Flight Info':'#FCEBEB:#501313',
   'Long Stay':'#E1F5EE:#04342C',
+  'Potential VIP':'#FAEEDA:#633806',
 }};
 
 function flagColor(f) {{
@@ -1771,6 +1803,7 @@ function render(filterCat) {{
       else if (/child/.test(fl)) cat='children';
       else if (/no flight info/.test(fl)) cat='noflight';
       else if (/long stay/.test(fl)) cat='longstay';
+      else if (/potential vip/.test(fl)) cat='potvip';
       else if (/ek|ey|qr|g9|ku|gf|sq|ai|6e/.test(fl)) cat='flight';
       return `<span class="flag" style="${{flagColor(f)}}" title="Jump to related lines in report"
         onclick="goToBooking('${{g.anchor}}','${{cat}}',HLMAP['${{g.anchor}}'])">${{f}}</span>`;
@@ -1837,7 +1870,8 @@ function filterGuests(cat) {{
     'dbalance':'D$ Balance','together':'Travelling Together','legs':'Multi-Villa Legs','noeta':'Missing ETA',
     'eci':'Early Check-in','lco':'Late Check-out','upgrade':'Upgrades','comp':'Complimentary','children':'With Children',
     'noflight':'No Flight Info',
-    'longstay':'Long Stay (7+ nights)'
+    'longstay':'Long Stay (7+ nights)',
+    'potvip':'Potential VIP (title in notes)'
   }};
   document.getElementById('filter-tag').textContent = labels[cat] || cat;
   render(cat);
