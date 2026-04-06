@@ -615,15 +615,20 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                              and 35 <= w['x0'] <= 180
                              and re.match(r'^[0-9]{6,}$', w['text'])), None)
 
-                # Flight on sub-row
+                # Flight + ETA on conf sub-row
                 flight_w = next((w for w in words if w['top'] > t+3 and w['top'] < t+25
                                  and w['x0'] > 280 and w['x0'] < 420
                                  and re.match(r'^[A-Z0-9]{2,3}\s*\d{3,4}$', w['text'].replace(' ',''))), None)
                 flight_str = ''
                 if flight_w:
-                    has_eta = any(re.match(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$', w['text'])
-                                  for w in words if abs(w['top'] - flight_w['top']) <= 3)
-                    flight_str = flight_w['text'] if has_eta else f"{flight_w['text']} NO ETA"
+                    # ETA is on same line, at x0 ~250-320 (before flight code)
+                    eta_w = next((w for w in words
+                                  if abs(w['top'] - flight_w['top']) <= 3
+                                  and re.match(r'^([01]?\d|2[0-3]):[0-5]\d$', w['text'])), None)
+                    if eta_w:
+                        flight_str = f"{flight_w['text']} {eta_w['text']}"
+                    else:
+                        flight_str = f"{flight_w['text']} NO ETA"
 
                 # Collect flags for this booking
                 bflags = []
@@ -1191,6 +1196,8 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
     # ── Full report HTML rendering — images of actual PDF pages ─────────
     report_html = ''
     page_images  = summary_data.get('page_images', [])
+    emitted_anchor_ids = set()   # prevent duplicate id= attributes
+    emitted_hlids      = set()   # prevent duplicate data-hlid= attributes
 
     for pi in page_images:
         b64  = pi['b64']
@@ -1204,25 +1211,35 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         report_html += (f'<img src="data:image/jpeg;base64,{b64}" '
                         f'width="{iw}" height="{ih}" style="display:block;position:absolute;top:0;left:0">')
 
-        # Invisible anchor divs at exact pixel positions for JS scroll/flash
+        # Invisible anchor divs — emit each anchor ID only once
         for anc in pi.get('anchors', []):
-            aid    = anc['id']
-            y_px   = anc['y_px']
-            hl_id  = anc.get('hl_id','')
-            hl_attr = f' data-hlid="{hl_id}"' if hl_id else ''
+            aid   = anc['id']
+            y_px  = anc['y_px']
+            hl_id = anc.get('hl_id', '')
+            if aid in emitted_anchor_ids:
+                continue
+            emitted_anchor_ids.add(aid)
+            hl_attr = f' data-hlid="{hl_id}"' if hl_id and hl_id not in emitted_hlids else ''
+            if hl_id:
+                emitted_hlids.add(hl_id)
             report_html += (f'<div id="{aid}" class="booking-anchor"{hl_attr} '
                             f'style="position:absolute;top:{y_px}px;left:0;'
-                            f'width:100%;height:20px;pointer-events:none"></div>')
+                            f'width:100%;height:30px;pointer-events:none"></div>')
 
-        # hl_id overlays for flash (all highlighted lines)
+        # hl_id overlays for flash — emit each hlid only once
         for block in blocks_data:
             for line in block['lines']:
-                if line.get('hl_id') and line.get('pg') == pg:
-                    hlid   = line['hl_id']
-                    top_px = int(line['top'] * sc)
-                    report_html += (f'<div data-hlid="{hlid}" '
-                                    f'style="position:absolute;top:{top_px}px;left:0;'
-                                    f'width:100%;height:{int(9.5*sc)}px;pointer-events:none"></div>')
+                if not line.get('hl_id') or line.get('pg') != pg:
+                    continue
+                hlid = line['hl_id']
+                if hlid in emitted_hlids:
+                    continue
+                emitted_hlids.add(hlid)
+                top_px = int(line['top'] * sc)
+                line_h = int(10 * sc)  # ~16px at 120dpi
+                report_html += (f'<div data-hlid="{hlid}" '
+                                f'style="position:absolute;top:{top_px}px;left:0;'
+                                f'width:100%;height:{line_h}px;pointer-events:none"></div>')
 
         report_html += '</div>'
 
@@ -1296,8 +1313,13 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 #section-summary{{zoom:100%}}
 .report-page{{position:relative;margin:0 auto 16px auto;box-shadow:0 4px 16px rgba(0,0,0,.4);display:block;overflow:hidden}}
 .booking-anchor{{scroll-margin-top:80px}}
-@keyframes flashBooking{{0%,100%{{outline:none}}40%,60%{{outline:4px solid #F9A825}}}}
-.booking-flash{{animation:flashBooking 1.4s ease infinite}}
+@keyframes bookingPulse{{
+  0%   {{box-shadow: 4px 0 0 0 #F9A825 inset; background:rgba(249,168,37,0.06)}}
+  50%  {{box-shadow: 4px 0 0 0 #F9A825 inset, 0 0 20px 6px rgba(249,168,37,0.28); background:rgba(249,168,37,0.18)}}
+  100% {{box-shadow: 4px 0 0 0 #F9A825 inset; background:rgba(249,168,37,0.06)}}
+}}
+.booking-flash{{animation:bookingPulse 1.8s ease-in-out infinite;z-index:10}}
+.hl-line-flash{{animation:bookingPulse 1.8s ease-in-out infinite;z-index:11;box-shadow:3px 0 0 0 #e67e00 inset}}
 /* Floating back-to-summary button */
 .float-back{{position:fixed;bottom:28px;right:28px;z-index:999;background:#1a1a2e;color:#fff;border:none;border-radius:30px;padding:11px 20px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.35);display:none;align-items:center;gap:7px;transition:background .15s}}
 .float-back:hover{{background:#2d2d50}}
@@ -1444,7 +1466,12 @@ function clearHlFlash() {{
   if (hlFlashInterval) {{ clearInterval(hlFlashInterval); hlFlashInterval = null; }}
   activeHlIds.forEach(id => {{
     const el = document.querySelector(`[data-hlid="${{id}}"]`);
-    if (el) {{ el.style.outline = ''; el.style.backgroundColor = ''; }}
+    if (el) {{
+      el.classList.remove('hl-line-flash');
+      el.style.background = '';
+      el.style.boxShadow = '';
+      el.style.zIndex = '';
+    }}
   }});
   activeHlIds = [];
 }}
@@ -1453,17 +1480,12 @@ function flashHlLines(hlIds) {{
   clearHlFlash();
   if (!hlIds || !hlIds.length) return;
   activeHlIds = hlIds;
-  let on = true;
-  hlFlashInterval = setInterval(() => {{
-    activeHlIds.forEach(id => {{
-      const el = document.querySelector(`[data-hlid="${{id}}"]`);
-      if (el) {{
-        el.style.outline = on ? '2px solid #F9A825' : 'none';
-        el.style.backgroundColor = on ? 'rgba(255,235,50,0.5)' : '';
-      }}
-    }});
-    on = !on;
-  }}, 600);
+  activeHlIds.forEach(id => {{
+    const el = document.querySelector(`[data-hlid="${{id}}"]`);
+    if (el) {{
+      el.classList.add('hl-line-flash');
+    }}
+  }});
 }}
 
 function goToBooking(anchor, flagCat, hlLines) {{
@@ -1516,7 +1538,19 @@ function render(filterCat) {{
     if (!match) tr.classList.add('dimmed');
 
     const flightHtml = g.flight && g.flight !== '--' && g.flight !== '-' && g.flight !== ''
-      ? `<span class="flight-badge${{g.flight.includes('NO ETA')?' noeta':''}}">${{g.flight}}</span>`
+      ? (() => {{
+          const noEta = g.flight.includes('NO ETA');
+          const parts = g.flight.replace(' NO ETA','').trim().split(' ');
+          const flightNo = parts[0];
+          const eta = parts.length > 1 && !noEta ? parts[1] : '';
+          if (noEta) {{
+            return `<span class="flight-badge noeta">${{flightNo}} <span style="font-size:10px;opacity:.85">⚠️ No ETA</span></span>`;
+          }} else if (eta) {{
+            return `<span class="flight-badge">${{flightNo}} <span style="font-size:10px;color:#166534;background:#dcfce7;padding:1px 5px;border-radius:8px;margin-left:2px">🕐 ${{eta}}</span></span>`;
+          }} else {{
+            return `<span class="flight-badge">${{flightNo}}</span>`;
+          }}
+        }})()
       : '<span style="color:#cbd5e1">—</span>';
 
     const flagsHtml = g.flags.map(f => {{
