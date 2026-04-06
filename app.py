@@ -537,21 +537,6 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                         hl(conf['x0'], conf['top'], conf['x1'], conf['bottom'],
                            'roomno', YELLOW, popup)
 
-                    # Orange highlight on conf line if no flight code found
-                    if enabled_cats.get('flight') and conf:
-                        conf_row = sorted([w for w in words
-                                           if abs(w['top'] - conf['top']) <= 3],
-                                          key=lambda x: x['x0'])
-                        conf_text = ' '.join(w['text'] for w in conf_row)
-                        has_flight = bool(re.search(
-                            r'\b(EK|EY|QR|G9|KU|GF|SQ|AI|6E|UL|OS|SU)\s*\d{3,4}\b'
-                            r'|^(RMV|OTH|Airport|FERRY|TRF)$',
-                            conf_text, re.I))
-                        if not has_flight:
-                            hl(conf['x0'], conf['top'],
-                               max(w['x1'] for w in conf_row), conf['bottom'],
-                               'flight', ORANGE, '⚠️ NO FLIGHT INFO — please check manually')
-
             if annots:
                 p = writer.pages[pg_idx]
                 if '/Annots' in p:
@@ -780,6 +765,42 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     'note':       note,
                     'pdf_page':   pg_idx + 2,
                 })
+
+    # ══ PASS 4.5: orange annotation for bookings with no flight info ═════
+    # flight_text is known per guest from Pass 4 — use it to annotate PDF
+    if enabled_cats.get('flight'):
+        no_flight_guests = [g for g in summary_guests if g['flight'] == 'NO FLIGHT INFO']
+        for g in no_flight_guests:
+            # Find the booking in all_bookings to get pg_idx and row_top
+            bkg = next((b for b in all_bookings
+                        if b['room'] == g['room'] and b['conf'] == g['conf']), None)
+            if not bkg: continue
+            pg_idx = bkg['pg_idx']
+            t      = bkg['row_top']
+
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as _pdf2:
+                page  = _pdf2.pages[pg_idx]
+                ph    = float(page.height)
+                words = [w for w in page.extract_words(x_tolerance=2, y_tolerance=2)
+                         if w['top'] < ph * 0.91]
+
+            # Find conf line
+            conf = next((w for w in words if w['top'] > t+3 and w['top'] < t+25
+                         and 35 <= w['x0'] <= 180
+                         and re.match(r'^[0-9]{6,}$', w['text'])), None)
+            if not conf: continue
+
+            conf_row = sorted([w for w in words if abs(w['top'] - conf['top']) <= 3],
+                              key=lambda x: x['x0'])
+            annot = make_annot(conf['x0'], conf['top'],
+                               max(w['x1'] for w in conf_row), conf['bottom'],
+                               ph, ORANGE, '⚠️ NO FLIGHT INFO — please check manually')
+            p = writer.pages[pg_idx]
+            if '/Annots' in p:
+                p['/Annots'].append(annot)
+            else:
+                p[NameObject('/Annots')] = ArrayObject([annot])
+            counts['flight'] += 1
 
     # Build summary data dict
     summary_data = {
