@@ -1570,7 +1570,7 @@ th:last-child{{width:45%}}
 td{{padding:9px 11px;border-bottom:1.5px solid #e2e8f0;vertical-align:top}}
 tbody tr:nth-child(even){{background:#fafbfd}}
 tbody tr:hover{{background:#f0f7ff!important}}
-td:last-child{{width:45%;min-width:300px}}
+td:last-child{{width:40%}}
 tr:last-child td{{border-bottom:none}}
 tr.dimmed{{opacity:.2;transition:opacity .2s}}
 .room-no{{font-weight:700;font-size:14px}}
@@ -1609,6 +1609,35 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 .float-back{{position:fixed;bottom:28px;right:28px;z-index:999;background:#1a1a2e;color:#fff;border:none;border-radius:30px;padding:11px 20px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.35);display:none;align-items:center;gap:7px;transition:background .15s}}
 .float-back:hover{{background:#2d2d50}}
 .float-back.visible{{display:flex}}
+
+/* ── Mobile responsive ── */
+@media (max-width:768px){{
+  .header{{padding:10px 14px;flex-wrap:wrap;gap:4px}}
+  .header h1{{font-size:14px}}
+  .property{{font-size:13px;text-align:left;width:100%}}
+  .header-sub{{font-size:10px}}
+  .nav-tab{{padding:8px 16px;font-size:12px}}
+  .stats{{padding:8px 12px;gap:6px}}
+  .stat-card{{min-width:60px;padding:6px 4px}}
+  .stat-num{{font-size:16px}}
+  .stat-label{{font-size:9px}}
+  .stat-icon{{font-size:13px}}
+  .filter-bar{{padding:6px 12px;flex-wrap:wrap;gap:6px}}
+  .dl-pdf-btn{{margin-left:0}}
+  .table-wrap{{padding:8px 0}}
+  table{{font-size:12px;border-radius:0}}
+  th{{padding:7px 8px;font-size:9px}}
+  td{{padding:7px 8px}}
+  td:last-child{{min-width:0;width:auto}}
+  th:last-child{{width:auto}}
+  .room-no{{font-size:13px}}
+  .note-manual-field{{font-size:11px}}
+  /* Stack table horizontally scrollable on small screens */
+  .table-wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
+  table{{min-width:600px}}
+  #section-report{{padding:8px;zoom:100%}}
+  .float-back{{bottom:16px;right:16px;padding:9px 16px;font-size:12px}}
+}}
 </style>
 </head>
 <body>
