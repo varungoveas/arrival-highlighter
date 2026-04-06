@@ -752,6 +752,35 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     if re.match(r'^[A-Z0-9,]+$', line_text): continue  # all caps/numbers only
                     if re.match(r'^(Reservation Notes|Reservation Comment|Total stays|Total nights|PreRegistered|Specials|Preferences|Membership Type|Promotions|Profile Notes|Central Comments|Routing Instruction|Fixed Charges)[\s:]', line_text, re.I): continue
                     note_lines.append(line_text)
+                # Check-in / Check-out dates and room type from room row
+                checkin_w  = next((w for w in row if 288 <= w['x0'] <= 310
+                                   and re.match(r'^\d{2}/\d{2}/\d{2}$', w['text'])), None)
+                checkout_w = next((w for w in row if 326 <= w['x0'] <= 348
+                                   and re.match(r'^\d{2}/\d{2}/\d{2}$', w['text'])), None)
+                room_type_w = next((w for w in row if 364 <= w['x0'] <= 385
+                                    and re.match(r'^1[A-Z]\d[A-Z]{2}$', w['text'])), None)
+                adults_w  = next((w for w in row if 410 <= w['x0'] <= 432 and w['text'].isdigit()), None)
+                child_w   = next((w for w in row if 434 <= w['x0'] <= 455 and w['text'].isdigit()), None)
+
+                checkin_str  = checkin_w['text']  if checkin_w  else ''
+                checkout_str = checkout_w['text'] if checkout_w else ''
+                room_type    = room_type_w['text'] if room_type_w else ''
+                adults_count  = int(adults_w['text'])  if adults_w  else 0
+                child_count   = int(child_w['text'])   if child_w   else 0
+
+                # Long stay flag — 7+ nights
+                nights = 0
+                if checkin_w and checkout_w:
+                    try:
+                        from datetime import datetime as _dt
+                        ci = _dt.strptime(checkin_w['text'],  '%d/%m/%y')
+                        co = _dt.strptime(checkout_w['text'], '%d/%m/%y')
+                        nights = (co - ci).days
+                        if nights >= 7:
+                            bflags.append(f'Long Stay ({nights}N)')
+                    except Exception:
+                        pass
+
                 note = ' // '.join(note_lines[:8]) if note_lines else ''
 
                 summary_guests.append({
@@ -764,6 +793,12 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     'flags':      bflags,
                     'note':       note,
                     'pdf_page':   pg_idx + 2,
+                    'checkin':    checkin_str,
+                    'checkout':   checkout_str,
+                    'room_type':  room_type,
+                    'nights':     nights,
+                    'adults':     adults_count,
+                    'children':   child_count,
                 })
 
     # ══ PASS 4.5: orange annotation for bookings with no flight info ═════
@@ -1267,6 +1302,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             if 'upgrade' in fl: cats.append('upgrade')
             if fl == 'comp': cats.append('comp')
             if 'child' in fl: cats.append('children')
+            if 'long stay' in fl: cats.append('longstay')
         if g['flight'] and 'NO ETA' in g['flight']: cats.append('noeta')
         if g['flight'] and g['flight'] not in ('', '--', '-', 'NO FLIGHT INFO'): cats.append('flight')
         if g['flight'] == 'NO FLIGHT INFO': cats.append('noflight')
@@ -1282,6 +1318,12 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             'note':       g['note'], 'cats': list(set(cats)),
             'anchor':     f"booking-{g['conf']}-{g['room']}",
             'hl_lines':   hl_lines,
+            'checkin':    g.get('checkin',''),
+            'checkout':   g.get('checkout',''),
+            'room_type':  g.get('room_type',''),
+            'nights':     g.get('nights', 0),
+            'adults':     g.get('adults', 0),
+            'children':   g.get('children', 0),
         })
 
     # ── Stat cards ────────────────────────────────────────────────────────
@@ -1307,6 +1349,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
                 if 'upgrade' in fl: cats_g.append('upgrade')
                 if fl == 'comp': cats_g.append('comp')
                 if 'child' in fl: cats_g.append('children')
+                if 'long stay' in fl: cats_g.append('longstay')
             if g.get('flight') and g['flight'] not in ('','--','-','NO FLIGHT INFO'): cats_g.append('flight')
             if g.get('flight') and 'NO ETA' in g.get('flight',''): cats_g.append('noeta')
             if g.get('flight') == 'NO FLIGHT INFO': cats_g.append('noflight')
@@ -1332,6 +1375,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         ('upgrade',    '⬆️', 'Upgrade',    len([g for g in guests if any('Upgrade' in f for f in g['flags'])]), 'upgrade'),
         ('comp',       '🎁', 'Comp',       len([g for g in guests if any('Comp' in f for f in g['flags'])]), 'comp'),
         ('children',   '👶', 'Children',   len([g for g in guests if any('Child' in f for f in g['flags'])]), 'children'),
+        ('longstay',   '🌴', 'Long Stay',  len([g for g in guests if any('Long Stay' in f for f in g['flags'])]), 'longstay'),
     ]
     stat_cards = ''
     for sid, icon, label, val, cat in stat_items:
@@ -1535,6 +1579,7 @@ const FLAG_COLORS = {{
   'Early Check-in':'#E1F5EE:#04342C','Late Check-out':'#FAEEDA:#633806',
   'Upgrade':'#E6F1FB:#042C53','Comp':'#FBEAF0:#72243E','Child':'#FAEEDA:#633806',
   'No Flight Info':'#FCEBEB:#501313',
+  'Long Stay':'#E1F5EE:#04342C',
 }};
 
 function flagColor(f) {{
@@ -1725,16 +1770,19 @@ function render(filterCat) {{
       else if (/^comp$/.test(fl)) cat='comp';
       else if (/child/.test(fl)) cat='children';
       else if (/no flight info/.test(fl)) cat='noflight';
+      else if (/long stay/.test(fl)) cat='longstay';
       else if (/ek|ey|qr|g9|ku|gf|sq|ai|6e/.test(fl)) cat='flight';
       return `<span class="flag" style="${{flagColor(f)}}" title="Jump to related lines in report"
         onclick="goToBooking('${{g.anchor}}','${{cat}}',HLMAP['${{g.anchor}}'])">${{f}}</span>`;
     }}).join('');
 
     tr.innerHTML = `
-      <td><span class="room-no">${{g.room}}</span><br><span class="conf-no">${{g.conf}}</span></td>
+      <td><span class="room-no">${{g.room}}</span><br><span class="conf-no">${{g.conf}}</span>${{g.room_type ? `<br><span style="font-size:10px;color:#374151;font-family:monospace;font-weight:600">${{g.room_type}}</span>` : ''}}</td>
       <td>
         <span class="guest-name guest-link" onclick="goToBooking('${{g.anchor}}',null,null)" title="Jump to booking in report">${{g.name}}</span>
         ${{g.ta ? `<br><span class="ta-name">${{g.ta}}</span>` : ''}}
+        ${{g.checkin && g.checkout ? `<br><span style="font-size:10px;color:#1e2535;font-weight:500">${{g.checkin}} → ${{g.checkout}}${{g.nights ? ` (${{g.nights}}N)` : ''}}</span>` : ''}}
+        ${{(g.adults || g.children) ? `<br><span style="font-size:10px;color:#374151">👤 ${{g.adults}}${{g.children ? ` · 🧒 ${{g.children}}` : ''}}</span>` : ''}}
       </td>
       <td>${{flightHtml}}</td>
       <td><div class="flags">${{flagsHtml}}</div></td>
@@ -1788,7 +1836,8 @@ function filterGuests(cat) {{
     'allergy':'Allergies / Dietary','occasion':'Special Occasions','payment':'Payments to Collect',
     'dbalance':'D$ Balance','together':'Travelling Together','legs':'Multi-Villa Legs','noeta':'Missing ETA',
     'eci':'Early Check-in','lco':'Late Check-out','upgrade':'Upgrades','comp':'Complimentary','children':'With Children',
-    'noflight':'No Flight Info'
+    'noflight':'No Flight Info',
+    'longstay':'Long Stay (7+ nights)'
   }};
   document.getElementById('filter-tag').textContent = labels[cat] || cat;
   render(cat);
