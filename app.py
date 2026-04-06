@@ -615,20 +615,27 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                              and 35 <= w['x0'] <= 180
                              and re.match(r'^[0-9]{6,}$', w['text'])), None)
 
-                # Flight + ETA on conf sub-row
-                flight_w = next((w for w in words if w['top'] > t+3 and w['top'] < t+25
-                                 and w['x0'] > 280 and w['x0'] < 420
+                # Flight + ETA + arrival method on conf sub-row
+                conf_line_words = sorted([w for w in words if w['top'] > t+3 and w['top'] < t+25],
+                                         key=lambda x: x['x0'])
+                flight_w = next((w for w in conf_line_words
+                                 if w['x0'] > 280 and w['x0'] < 420
                                  and re.match(r'^[A-Z0-9]{2,3}\s*\d{3,4}$', w['text'].replace(' ',''))), None)
                 flight_str = ''
                 if flight_w:
-                    # ETA is on same line, at x0 ~250-320 (before flight code)
-                    eta_w = next((w for w in words
+                    eta_w = next((w for w in conf_line_words
                                   if abs(w['top'] - flight_w['top']) <= 3
                                   and re.match(r'^([01]?\d|2[0-3]):[0-5]\d$', w['text'])), None)
                     if eta_w:
                         flight_str = f"{flight_w['text']} {eta_w['text']}"
                     else:
                         flight_str = f"{flight_w['text']} NO ETA"
+
+                # Arrival method: SBA/SBR/etc at x≈380-420 on conf line
+                arr_method_w = next((w for w in conf_line_words
+                                     if 375 <= w['x0'] <= 430
+                                     and re.match(r'^S[A-Z]{2}$', w['text'])), None)
+                arr_method = arr_method_w['text'] if arr_method_w else ''
 
                 # Collect flags for this booking
                 bflags = []
@@ -693,14 +700,15 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 note = ' // '.join(note_lines[:8]) if note_lines else ''
 
                 summary_guests.append({
-                    'room':  rw['text'],
-                    'name':  ' '.join(w['text'] for w in row if 41 <= w['x0'] <= 280)[:30],
-                    'conf':  conf['text'] if conf else '',
-                    'ta':    ta_name[:30],
-                    'flight': flight_str,
-                    'flags': bflags,
-                    'note':  note,
-                    'pdf_page': pg_idx + 2,
+                    'room':       rw['text'],
+                    'name':       ' '.join(w['text'] for w in row if 41 <= w['x0'] <= 280)[:30],
+                    'conf':       conf['text'] if conf else '',
+                    'ta':         ta_name[:30],
+                    'flight':     flight_str,
+                    'arr_method': arr_method,
+                    'flags':      bflags,
+                    'note':       note,
+                    'pdf_page':   pg_idx + 2,
                 })
 
     # Build summary data dict
@@ -939,6 +947,14 @@ def highlight_pdf(pdf_bytes, enabled_cats):
     summary_data['full_report_blocks'] = blocks
     summary_data['logo_b64']           = logo_b64
 
+
+    # ── Pre-assign synthetic hl_ids to anchor lines ──────────────────────
+    # Must happen BEFORE page images so overlays are emitted correctly
+    for block in blocks:
+        for line in block['lines']:
+            if line.get('anchor_id') and not line.get('hl_id'):
+                line['hl_id'] = f"anchor-{line['anchor_id']}"
+
     # ── PASS 6: render each PDF page as image with highlights ────────────
     try:
         from PIL import Image as _PILImage, ImageDraw as _PILDraw
@@ -987,16 +1003,31 @@ def highlight_pdf(pdf_bytes, enabled_cats):
             bg.save(buf, format='JPEG', quality=75)
             b64 = _b64mod.b64encode(buf.getvalue()).decode()
 
-            # Collect anchor positions on this page (for click overlays)
+            # Collect anchor positions — one per booking, use the room/name line (x0<40)
             anchors = []
+            seen_anchor_ids = set()
             for block in blocks:
                 for line in block['lines']:
-                    if line.get('anchor_id') and line.get('pg') == pg_idx:
-                        anchors.append({
-                            'id':    line['anchor_id'],
-                            'y_px':  int(line['top'] * SCALE),
-                            'hl_id': line.get('hl_id',''),
-                        })
+                    aid = line.get('anchor_id', '')
+                    if not aid or line.get('pg') != pg_idx:
+                        continue
+                    if aid in seen_anchor_ids:
+                        continue
+                    # Prefer the room/name line (has word at x0<40) over the TA line
+                    words = line.get('words', [])
+                    is_room_line = any(w['x'] < 40 for w in words)
+                    if not is_room_line and any(
+                        l.get('anchor_id') == aid and l.get('pg') == pg_idx
+                        and any(w['x'] < 40 for w in l.get('words', []))
+                        for l in (ll for b in blocks for ll in b['lines'])
+                    ):
+                        continue  # skip TA line, room line will be processed
+                    seen_anchor_ids.add(aid)
+                    anchors.append({
+                        'id':    aid,
+                        'y_px':  int(line['top'] * SCALE),
+                        'hl_id': line.get('hl_id', ''),
+                    })
 
             page_images.append({
                 'pg':       pg_idx,
@@ -1072,16 +1103,20 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         if not booking_block:
             return result
 
-        # Always include the booking header lines (room+name rows) under 'booking'
+        # Always include the booking header lines under 'booking'
+        # Use the room/name line (x0 < 40) as the primary anchor — hl_id already pre-assigned
         anchor_lines = [l for l in booking_block['lines'] if l.get('anchor_id') == anchor]
+        # Prefer room/name line (has word at x<40), fall back to any anchor line
+        room_lines = [l for l in anchor_lines if any(w['x'] < 40 for w in l.get('words', []))]
+        primary_lines = room_lines if room_lines else anchor_lines[:1]
         booking_hl_ids = []
         seen_ids = set()
-        for l in anchor_lines:
-            if not l.get('hl_id'):
-                l['hl_id'] = f"anchor-{anchor}"
-            if l['hl_id'] not in seen_ids:
-                booking_hl_ids.append(l['hl_id'])
-                seen_ids.add(l['hl_id'])
+        for l in primary_lines:
+            hid = l.get('hl_id') or f"anchor-{anchor}"
+            l['hl_id'] = hid
+            if hid not in seen_ids:
+                booking_hl_ids.append(hid)
+                seen_ids.add(hid)
         if booking_hl_ids:
             result['booking'] = booking_hl_ids
 
@@ -1143,12 +1178,14 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         hl_lines = get_hl_lines_for_guest(g)
 
         guests_json.append({
-            'room':     g['room'], 'name': g['name'], 'conf': g['conf'],
-            'ta':       g.get('ta',''),
-            'flight':   g['flight'], 'flags': g['flags'],
-            'note':     g['note'], 'cats': list(set(cats)),
-            'anchor':   f"booking-{g['conf']}-{g['room']}",
-            'hl_lines': hl_lines,   # {cat: [hl_id, ...]}
+            'room':       g['room'], 'name': g['name'], 'conf': g['conf'],
+            'ta':         g.get('ta',''),
+            'flight':     g['flight'],
+            'arr_method': g.get('arr_method',''),
+            'flags':      g['flags'],
+            'note':       g['note'], 'cats': list(set(cats)),
+            'anchor':     f"booking-{g['conf']}-{g['room']}",
+            'hl_lines':   hl_lines,
         })
 
     # ── Stat cards ────────────────────────────────────────────────────────
@@ -1314,12 +1351,12 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 .report-page{{position:relative;margin:0 auto 16px auto;box-shadow:0 4px 16px rgba(0,0,0,.4);display:block;overflow:hidden}}
 .booking-anchor{{scroll-margin-top:80px}}
 @keyframes bookingPulse{{
-  0%   {{box-shadow: 4px 0 0 0 #F9A825 inset; background:rgba(249,168,37,0.06)}}
-  50%  {{box-shadow: 4px 0 0 0 #F9A825 inset, 0 0 20px 6px rgba(249,168,37,0.28); background:rgba(249,168,37,0.18)}}
-  100% {{box-shadow: 4px 0 0 0 #F9A825 inset; background:rgba(249,168,37,0.06)}}
+  0%   {{box-shadow: 4px 0 0 0 #d4a017 inset; background:rgba(255,245,80,0.18)}}
+  50%  {{box-shadow: 4px 0 0 0 #d4a017 inset, 0 0 20px 6px rgba(255,235,50,0.50); background:rgba(255,245,80,0.55)}}
+  100% {{box-shadow: 4px 0 0 0 #d4a017 inset; background:rgba(255,245,80,0.18)}}
 }}
 .booking-flash{{animation:bookingPulse 1.8s ease-in-out infinite;z-index:10}}
-.hl-line-flash{{animation:bookingPulse 1.8s ease-in-out infinite;z-index:11;box-shadow:3px 0 0 0 #e67e00 inset}}
+.hl-line-flash{{animation:bookingPulse 1.8s ease-in-out infinite;z-index:11;box-shadow:3px 0 0 0 #c0610a inset}}
 /* Floating back-to-summary button */
 .float-back{{position:fixed;bottom:28px;right:28px;z-index:999;background:#1a1a2e;color:#fff;border:none;border-radius:30px;padding:11px 20px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.35);display:none;align-items:center;gap:7px;transition:background .15s}}
 .float-back:hover{{background:#2d2d50}}
@@ -1543,13 +1580,17 @@ function render(filterCat) {{
           const parts = g.flight.replace(' NO ETA','').trim().split(' ');
           const flightNo = parts[0];
           const eta = parts.length > 1 && !noEta ? parts[1] : '';
+          const method = g.arr_method || '';
+          let badge = '';
           if (noEta) {{
-            return `<span class="flight-badge noeta">${{flightNo}} <span style="font-size:10px;opacity:.85">⚠️ No ETA</span></span>`;
+            badge = `<span class="flight-badge noeta">${{flightNo}} <span style="font-size:10px;opacity:.85">⚠️ No ETA</span></span>`;
           }} else if (eta) {{
-            return `<span class="flight-badge">${{flightNo}} <span style="font-size:10px;color:#166534;background:#dcfce7;padding:1px 5px;border-radius:8px;margin-left:2px">🕐 ${{eta}}</span></span>`;
+            badge = `<span class="flight-badge">${{flightNo}} <span style="font-size:10px;color:#166534;background:#dcfce7;padding:1px 5px;border-radius:8px;margin-left:2px">🕐 ${{eta}}</span></span>`;
           }} else {{
-            return `<span class="flight-badge">${{flightNo}}</span>`;
+            badge = `<span class="flight-badge">${{flightNo}}</span>`;
           }}
+          if (method) badge += `<br><span style="font-size:10px;color:#6b7280;margin-top:2px;display:inline-block;letter-spacing:.04em">${{method}}</span>`;
+          return badge;
         }})()
       : '<span style="color:#cbd5e1">—</span>';
 
