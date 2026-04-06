@@ -161,7 +161,7 @@ def build_summary_page(summary_data):
     story.append(ht)
     story.append(Spacer(1, 5))
 
-    # Stats
+    # Stats — match HTML stat cards
     stat_items = [
         ('Rooms',      summary_data['rooms']),
         ('Repeaters',  summary_data['counts'].get('repeater', 0)),
@@ -172,63 +172,126 @@ def build_summary_page(summary_data):
         ('Allergies',  summary_data['counts'].get('allergy', 0)),
         ('Occasions',  summary_data['counts'].get('occasion', 0)),
         ('Payment',    summary_data['counts'].get('payment', 0)),
+        ('Early CI',   len([g for g in summary_data['guests'] if any('Early Check-in' in f for f in g['flags'])])),
+        ('Late CO',    len([g for g in summary_data['guests'] if any('Late Check-out' in f for f in g['flags'])])),
+        ('Upgrade',    len([g for g in summary_data['guests'] if any('Upgrade' in f for f in g['flags'])])),
+        ('Comp',       len([g for g in summary_data['guests'] if any('Comp' in f for f in g['flags'])])),
+        ('Children',   len([g for g in summary_data['guests'] if any('Child' in f for f in g['flags'])])),
+        ('No Flight',  len([g for g in summary_data['guests'] if g.get('flight') == 'NO FLIGHT INFO'])),
+        ('Long Stay',  len([g for g in summary_data['guests'] if any('Long Stay' in f for f in g['flags'])])),
+        ('Pot. VIP',   len([g for g in summary_data['guests'] if any('Potential VIP' in f for f in g['flags'])])),
     ]
-    cw = W / len(stat_items)
-    label_row  = [Paragraph(f'<font size="8" color="#6b7280">{s[0]}</font>',
-                             ps(8, align=TA_CENTER)) for s in stat_items]
-    number_row = [Paragraph(f'<b>{s[1]}</b>',
-                             ps(22, C_HEADER, bold=True, align=TA_CENTER)) for s in stat_items]
-    st = Table([label_row, number_row], colWidths=[cw]*len(stat_items))
-    st.setStyle(TableStyle([
-        ('BACKGROUND',(0,0),(-1,-1),C_BG),
-        ('BOX',(0,0),(-1,-1),0.5,C_BORDER),
-        ('LINEAFTER',(0,0),(-2,-1),0.5,C_BORDER),
-        ('ALIGN',(0,0),(-1,-1),'CENTER'),
-        ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
-        ('TOPPADDING',(0,0),(-1,0),8),('BOTTOMPADDING',(0,0),(-1,0),1),
-        ('TOPPADDING',(0,1),(-1,1),1),('BOTTOMPADDING',(0,1),(-1,1),9),
-        ('LINEBELOW',(0,0),(-1,0),0,C_BG),
-    ]))
-    story.append(st)
+    # Split into two rows of stat cards if many items
+    cw = W / min(len(stat_items), 9)
+    row1 = stat_items[:9]
+    row2 = stat_items[9:]
+    def make_stat_table(items):
+        _cw = W / len(items)
+        _labels  = [Paragraph(f'<font size="7" color="#6b7280">{s[0]}</font>',
+                               ps(7, align=TA_CENTER)) for s in items]
+        _numbers = [Paragraph(f'<b>{s[1]}</b>',
+                               ps(18, C_HEADER, bold=True, align=TA_CENTER)) for s in items]
+        _t = Table([_labels, _numbers], colWidths=[_cw]*len(items))
+        _t.setStyle(TableStyle([
+            ('BACKGROUND',(0,0),(-1,-1),C_BG),
+            ('BOX',(0,0),(-1,-1),0.5,C_BORDER),
+            ('LINEAFTER',(0,0),(-2,-1),0.5,C_BORDER),
+            ('ALIGN',(0,0),(-1,-1),'CENTER'),
+            ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+            ('TOPPADDING',(0,0),(-1,0),5),('BOTTOMPADDING',(0,0),(-1,0),1),
+            ('TOPPADDING',(0,1),(-1,1),1),('BOTTOMPADDING',(0,1),(-1,1),6),
+        ]))
+        return _t
+    story.append(make_stat_table(row1))
+    if row2:
+        story.append(Spacer(1, 2))
+        story.append(make_stat_table(row2))
     story.append(Spacer(1, 5))
 
     # Guest table
     def flag_para(flags):
         parts = []
         for f in flags:
-            if any(x in f for x in ['VIP','Titanium','Platinum','Gold','Red']):
+            fl = f.lower()
+            if any(x in f for x in ['VIP','Titanium','Platinum','Gold','Silver','Red']):
                 bg, fg = '#EEEDFE','#26215C'
-            elif any(x in f.lower() for x in ['allergy','shellfish','gluten','peanut','lactose','vegan','vegetarian','halal','kosher']):
+            elif any(x in fl for x in ['allerg','shellfish','gluten','peanut','lactose','vegan','halal']):
                 bg, fg = '#FCEBEB','#501313'
-            elif 'Complaint' in f or 'Glitch' in f:
+            elif 'complaint' in fl or 'glitch' in fl:
                 bg, fg = '#FCEBEB','#501313'
-            elif 'Collect' in f or 'Payment' in f:
+            elif 'collect' in fl or 'payment' in fl:
                 bg, fg = '#FAEEDA','#633806'
-            elif 'Together' in f:
+            elif 'together' in fl:
                 bg, fg = '#E6F1FB','#042C53'
-            elif any(x in f for x in ['RPT','stay','Repeat']):
+            elif any(x in fl for x in ['rpt','repeat']):
                 bg, fg = '#E1F5EE','#04342C'
-            elif any(x in f for x in ['Honeymoon','Anniversary','Birthday','Wedding','Occasion']):
+            elif any(x in f for x in ['Honeymoon','Anniversary','Birthday','Wedding','Babymoon','Proposal']):
                 bg, fg = '#EEEDFE','#26215C'
-            elif 'Leg' in f or 'leg' in f:
+            elif 'leg' in fl:
+                bg, fg = '#FAEEDA','#633806'
+            elif 'early check-in' in fl:
+                bg, fg = '#E1F5EE','#04342C'
+            elif 'late check-out' in fl:
+                bg, fg = '#FAEEDA','#633806'
+            elif 'upgrade' in fl:
+                bg, fg = '#E6F1FB','#042C53'
+            elif fl == 'comp':
+                bg, fg = '#FBEAF0','#72243E'
+            elif 'child' in fl:
+                bg, fg = '#FAEEDA','#633806'
+            elif 'long stay' in fl:
+                bg, fg = '#E1F5EE','#04342C'
+            elif 'no flight info' in fl:
+                bg, fg = '#FCEBEB','#501313'
+            elif 'potential vip' in fl:
                 bg, fg = '#FAEEDA','#633806'
             else:
                 bg, fg = '#F1EFE8','#2C2C2A'
-            parts.append(f'<font size="8" color="{fg}" backColor="{bg}"> {f} </font>')
-        return Paragraph('   '.join(parts), ps(8))
+            parts.append(f'<font size="7" color="{fg}" backColor="{bg}"> {f} </font>')
+        return Paragraph('  '.join(parts), ps(7))
 
     def flight_para(f):
-        if 'NO ETA' in f:
-            return Paragraph(f'<font size="8" color="#ffffff" backColor="#E24B4A"> {f} </font>', ps(8))
+        if f == 'NO FLIGHT INFO':
+            return Paragraph('<font size="7" color="#ffffff" backColor="#E24B4A"> ❓ No Flight Info </font>', ps(7))
+        elif 'NO ETA' in f:
+            return Paragraph(f'<font size="7" color="#ffffff" backColor="#E24B4A"> {f} </font>', ps(7))
         elif f and f not in ('--', '-', ''):
-            return Paragraph(f'<font size="8" color="#633806" backColor="#FAEEDA"> {f} </font>', ps(8))
-        return Paragraph('-', ps(8, C_MUT))
+            return Paragraph(f'<font size="7" color="#633806" backColor="#FAEEDA"> {f} </font>', ps(7))
+        return Paragraph('-', ps(7, C_MUT))
 
-    cws = [12*mm, 44*mm, 27*mm, 26*mm, 70*mm, W-179*mm]
+    def guest_para(g):
+        name     = g['name']
+        ta       = g.get('ta', '')
+        checkin  = g.get('checkin', '')
+        checkout = g.get('checkout', '')
+        nights   = g.get('nights', 0)
+        adults   = g.get('adults', 0)
+        children = g.get('children', 0)
+        lines = [f'<b><font size="9">{name}</font></b>']
+        if ta:
+            lines.append(f'<font size="7" color="#6b7280"><i>{ta}</i></font>')
+        if checkin and checkout:
+            night_str = f' ({nights}N)' if nights else ''
+            lines.append(f'<font size="7" color="#1e2535">{checkin} → {checkout}{night_str}</font>')
+        pax = f'Adl: {adults}'
+        if children:
+            pax += f'  Chl: {children}'
+        lines.append(f'<font size="7" color="#374151">{pax}</font>')
+        return Paragraph('<br/>'.join(lines), ps(8))
+
+    def conf_para(g):
+        conf      = g.get('conf', '')
+        room_type = g.get('room_type', '')
+        lines = [f'<font size="8" color="#6b7280">{conf}</font>']
+        if room_type:
+            lines.append(f'<font size="7" color="#374151"><b>{room_type}</b></font>')
+        return Paragraph('<br/>'.join(lines), ps(8))
+
+    cws = [12*mm, 48*mm, 22*mm, 26*mm, 68*mm, W-176*mm]
     thead = [
         Paragraph('Room',     ps(8, C_MUT, bold=True)),
         Paragraph('Guest',    ps(8, C_MUT, bold=True)),
-        Paragraph('Conf No.', ps(8, C_MUT, bold=True)),
+        Paragraph('Conf / Type', ps(8, C_MUT, bold=True)),
         Paragraph('Flight',   ps(8, C_MUT, bold=True)),
         Paragraph('Flags',    ps(8, C_MUT, bold=True)),
         Paragraph('Notes',    ps(8, C_MUT, bold=True)),
@@ -236,12 +299,12 @@ def build_summary_page(summary_data):
     rows = [thead]
     for g in summary_data['guests']:
         rows.append([
-            Paragraph(f'<b>{g["room"]}</b>', ps(9, C_HEADER, bold=True)),
-            Paragraph(g['name'], ps(9)),
-            Paragraph(f'<font color="#6b7280">{g["conf"]}</font>', ps(8)),
+            Paragraph(f'<b><font size="11">{g["room"]}</font></b>', ps(9, C_HEADER, bold=True)),
+            guest_para(g),
+            conf_para(g),
             flight_para(g['flight']),
             flag_para(g['flags']),
-            Paragraph(f'<font color="#6b7280">{g["note"]}</font>', ps(8)),
+            Paragraph(f'<font size="7" color="#374151">{g["note"]}</font>', ps(7)),
         ])
 
     gt = Table(rows, colWidths=cws, repeatRows=1)
