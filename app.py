@@ -255,6 +255,8 @@ def build_summary_page(summary_data):
                 bg, fg = '#FCEBEB','#501313'
             elif fl.startswith('poa'):
                 bg, fg = '#FAEEDA','#633806'
+            elif 'potential lqa' in fl:
+                bg, fg = '#FCEBEB','#501313'
             else:
                 bg, fg = '#F1EFE8','#2C2C2A'
             parts.append(f'<font size="7" color="{fg}" backColor="{bg}"> {f} </font>')
@@ -292,9 +294,12 @@ def build_summary_page(summary_data):
     def conf_para(g):
         conf      = g.get('conf', '')
         room_type = g.get('room_type', '')
+        rate_code = g.get('rate_code', '')
         lines = [f'<font size="8" color="#6b7280">{conf}</font>']
         if room_type:
             lines.append(f'<font size="7" color="#374151"><b>{room_type}</b></font>')
+        if rate_code:
+            lines.append(f'<font size="7" color="#6b7280">{rate_code}</font>')
         return Paragraph('<br/>'.join(lines), ps(8))
 
     cws = [12*mm, 48*mm, 22*mm, 26*mm, 68*mm, W-176*mm]
@@ -1067,10 +1072,16 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                                     and re.match(r'^1[A-Z]\d[A-Z]{2}$', w['text'])), None)
                 adults_w  = next((w for w in row if 410 <= w['x0'] <= 432 and w['text'].isdigit()), None)
                 child_w   = next((w for w in row if 434 <= w['x0'] <= 455 and w['text'].isdigit()), None)
+                rate_w    = next((w for w in row if 560 <= w['x0'] <= 590
+                                  and re.match(r'^[A-Z0-9]{6,}$', w['text'])), None)
+                src_w     = next((w for w in row if 475 <= w['x0'] <= 515
+                                  and re.match(r'^[A-Z]{2,4}$', w['text'])), None)
 
                 checkin_str  = checkin_w['text']  if checkin_w  else ''
                 checkout_str = checkout_w['text'] if checkout_w else ''
                 room_type    = room_type_w['text'] if room_type_w else ''
+                rate_code    = rate_w['text']     if rate_w     else ''
+                src_code     = src_w['text']      if src_w      else ''
                 adults_count  = int(adults_w['text'])  if adults_w  else 0
                 child_count   = int(child_w['text'])   if child_w   else 0
 
@@ -1087,6 +1098,18 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     except Exception:
                         pass
 
+                # ── Potential LQA Auditor ─────────────────────────────────
+                # Rate code starts with LQA prefix + direct booking + 3-4 nights
+                _LQA_PREFIXES = ('S12','S14','M12','M14','O12','O14',
+                                  'S16','M16','O16','O20','S23','S42','S43')
+                _is_lqa_rate   = bool(rate_code and rate_code.startswith(_LQA_PREFIXES))
+                _is_direct     = src_code in ('DIU','WTP','EML','WCO')
+                _ta_prefix     = re.match(r'^([A-Z])-', ta_name)
+                _not_wholesale = (_ta_prefix.group(1) != 'T') if _ta_prefix else True
+                _is_lqa_stay   = nights in (3, 4)
+                if _is_lqa_rate and _is_direct and _not_wholesale and _is_lqa_stay:
+                    bflags.append('Potential LQA')
+
                 note = ' // '.join(note_lines[:8]) if note_lines else ''
 
                 summary_guests.append({
@@ -1102,6 +1125,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     'checkin':    checkin_str,
                     'checkout':   checkout_str,
                     'room_type':  room_type,
+                    'rate_code':  rate_code,
                     'nights':     nights,
                     'adults':     adults_count,
                     'children':   child_count,
@@ -1641,6 +1665,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             if 'activit' in fl: cats.append('activity')
             if 'sharer missing' in fl: cats.append('sharermissing')
             if 'poa:' in fl or fl == 'poa amount': cats.append('poa')
+            if 'potential lqa' in fl: cats.append('lqa')
         if g['flight'] and 'NO ETA' in g['flight']: cats.append('noeta')
         if g['flight'] and g['flight'] not in ('', '--', '-', 'NO FLIGHT INFO'): cats.append('flight')
         if g['flight'] == 'NO FLIGHT INFO': cats.append('noflight')
@@ -1659,6 +1684,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             'checkin':    g.get('checkin',''),
             'checkout':   g.get('checkout',''),
             'room_type':  g.get('room_type',''),
+            'rate_code':  g.get('rate_code',''),
             'nights':     g.get('nights', 0),
             'adults':     g.get('adults', 0),
             'children':   g.get('children', 0),
@@ -1694,6 +1720,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
                 if 'activit' in fl: cats_g.append('activity')
                 if 'sharer missing' in fl: cats_g.append('sharermissing')
                 if 'poa:' in fl or fl == 'poa amount': cats_g.append('poa')
+                if 'potential lqa' in fl: cats_g.append('lqa')
             if g.get('flight') and g['flight'] not in ('','--','-','NO FLIGHT INFO'): cats_g.append('flight')
             if g.get('flight') and 'NO ETA' in g.get('flight',''): cats_g.append('noeta')
             if g.get('flight') == 'NO FLIGHT INFO': cats_g.append('noflight')
@@ -1726,6 +1753,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         ('activity',   '🤿', 'Activities', len([g for g in guests if any('Activit' in f for f in g['flags'])]), 'activity'),
         ('sharermissing','⚠️','Sharer?',   len([g for g in guests if any('Sharer Missing' in f for f in g['flags'])]), 'sharermissing'),
         ('poa',        '💵', 'POA Amt',    len([g for g in guests if any('POA' in f for f in g['flags'])]), 'poa'),
+        ('lqa',        '🔍', 'Pot. LQA',   len([g for g in guests if any('Potential LQA' in f for f in g['flags'])]), 'lqa'),
     ]
     stat_cards = ''
     for sid, icon, label, val, cat in stat_items:
@@ -1965,6 +1993,7 @@ const FLAG_COLORS = {{
   'Activities':'#E6F1FB:#042C53',
   'Sharer Missing':'#FCEBEB:#501313',
   'POA':'#FAEEDA:#633806',
+  'Potential LQA':'#FCEBEB:#501313',
 }};
 
 function flagColor(f) {{
@@ -2162,13 +2191,14 @@ function render(filterCat) {{
       else if (/activit/.test(fl)) cat='activity';
       else if (/sharer missing/.test(fl)) cat='sharermissing';
       else if (/^poa/.test(fl)) cat='poa';
+      else if (/potential lqa/.test(fl)) cat='lqa';
       else if (/ek|ey|qr|g9|ku|gf|sq|ai|6e/.test(fl)) cat='flight';
       return `<span class="flag" style="${{flagColor(f)}}" title="Jump to related lines in report"
         onclick="goToBooking('${{g.anchor}}','${{cat}}',HLMAP['${{g.anchor}}'])">${{f}}</span>`;
     }}).join('');
 
     tr.innerHTML = `
-      <td><span class="room-no">${{g.room}}</span><br><span class="conf-no">${{g.conf}}</span>${{g.room_type ? `<br><span style="font-size:10px;color:#374151;font-family:monospace;font-weight:600">${{g.room_type}}</span>` : ''}}</td>
+      <td><span class="room-no">${{g.room}}</span><br><span class="conf-no">${{g.conf}}</span>${{g.room_type ? `<br><span style="font-size:10px;color:#374151;font-family:monospace;font-weight:600">${{g.room_type}}</span>` : ''}}${{g.rate_code ? `<br><span style="font-size:9px;color:#6b7280;font-family:monospace">${{g.rate_code}}</span>` : ''}}</td>
       <td>
         <span class="guest-name guest-link" onclick="goToBooking('${{g.anchor}}',null,null)" title="Jump to booking in report">${{g.name}}</span>
         ${{g.ta ? `<br><span class="ta-name">${{g.ta}}</span>` : ''}}
@@ -2234,7 +2264,8 @@ function filterGuests(cat) {{
     'spa':'Spa Bookings',
     'activity':'Activities',
     'sharermissing':'Sharer Name Missing',
-    'poa':'POA with Amount'
+    'poa':'POA with Amount',
+    'lqa':'Potential LQA Auditor'
   }};
   document.getElementById('filter-tag').textContent = labels[cat] || cat;
   render(cat);
