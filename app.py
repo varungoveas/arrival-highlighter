@@ -245,6 +245,12 @@ def build_summary_page(summary_data):
                 bg, fg = '#FCEBEB','#501313'
             elif 'potential vip' in fl:
                 bg, fg = '#FAEEDA','#633806'
+            elif 'restaurant' in fl:
+                bg, fg = '#E1F5EE','#04342C'
+            elif 'spa' in fl:
+                bg, fg = '#FBEAF0','#72243E'
+            elif 'activit' in fl:
+                bg, fg = '#E6F1FB','#042C53'
             else:
                 bg, fg = '#F1EFE8','#2C2C2A'
             parts.append(f'<font size="7" color="{fg}" backColor="{bg}"> {f} </font>')
@@ -581,6 +587,34 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     )
                     if re.search(_vip_title_pat, t, re.I):
                         hl_line(ln, 'vip', ORANGE, '⚑ Potential VIP — title mentioned in notes')
+                # Restaurant booking mentions — specific names only, not Fixed Charges
+                _rest_hl_pats = (
+                    r'Fushi\s+Caf[eé]|Sea\s+Fire\s+Salt|\bSFS\b|\bAqua\b'
+                    r'|Yellow\s+Fin\s+Club|\bOrigami\b|Dhoni\s+Bar|\bCumin\b'
+                    r'|Baan\s+Huraa|Designer\s+Dining|Living\s+Room'
+                )
+                if (re.search(_rest_hl_pats, t, re.I)
+                        and not re.match(r'Fixed\s+Charges|Adj\.', t, re.I)
+                        and not re.search(r'complaint|glitch|charged.*restaurant', t, re.I)):
+                    hl_line(ln, 'occasion', YELLOW, '🍽️ Restaurant booking mentioned')
+                # Spa booking mentions
+                _spa_hl_pats = (
+                    r'Anantara\s+Spa|Dhigu\s+Spa|Veli\s+Spa'
+                    r'|spa\s+(?:booking|reserv|treatment|session)'
+                    r'|(?:couples?|four\s+hands?|hot\s+stone|facial|swedish|deep\s+tissue)\s+massage'
+                )
+                if (re.search(_spa_hl_pats, t, re.I)
+                        and not re.match(r'Fixed\s+Charges|Adj\.', t, re.I)):
+                    hl_line(ln, 'occasion', YELLOW, '💆 Spa booking mentioned')
+                # Activity mentions
+                _act_hl_pats = (
+                    r'snorkel|scuba|\bdiv(?:ing?|e)\b|sunset\s+(?:cruise|sail|dhoni)'
+                    r'|fishing\s+trip|\bdolphin\b|\bwhale\b|\bkayak'
+                    r'|watersport|water\s+sport|sandbank|overwater\s+dinner'
+                    r'|Activities\s+-\s+(?:Water|Diving|Snorkel)'
+                )
+                if re.search(_act_hl_pats, t, re.I):
+                    hl_line(ln, 'occasion', YELLOW, '🤿 Activity mentioned')
 
             # Room / Name / Conf No — skip sharers entirely
             if enabled_cats.get('roomno'):
@@ -834,6 +868,91 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 # No flight info
                 if not flight_text:
                     bflags.append('No Flight Info')
+
+                # ── Restaurant Bookings ──────────────────────────────────
+                # Only match specific restaurant names in comments/notes
+                # Exclude Fixed Charges lines and complaint context
+                _REST_NAMES = [
+                    r'Fushi\s+Caf[eé]', r'Sea\s+Fire\s+Salt', r'\bSFS\b',
+                    r'\bAqua\b', r'Yellow\s+Fin\s+Club', r'\bOrigami\b',
+                    r'Dhoni\s+Bar', r'\bCumin\b', r'Baan\s+Huraa',
+                    r'Designer\s+Dining', r'Living\s+Room',
+                ]
+                if not any('Restaurant' in f for f in bflags):
+                    # Build comment lines excluding Fixed Charges and complaint lines
+                    _rest_ct_lines = []
+                    _complaint_context = False
+                    for _w in words:
+                        if top_start <= _w['top'] <= top_end:
+                            pass
+                    # Get lines individually to filter out Fixed Charges
+                    _note_line_groups = defaultdict(list)
+                    for _w in words:
+                        if top_start <= _w['top'] <= top_end:
+                            _note_line_groups[round(_w['top'])].append(_w)
+                    for _tk in sorted(_note_line_groups):
+                        _line = ' '.join(_w['text'] for _w in
+                                        sorted(_note_line_groups[_tk], key=lambda x: x['x0']))
+                        # Skip Fixed Charges lines and complaint context
+                        if re.match(r'Fixed\s+Charges', _line, re.I): continue
+                        if re.match(r'Adj\.', _line, re.I): continue
+                        if re.search(r'complaint|glitch|upset|charged.*restaurant|restaurant.*charge', _line, re.I): continue
+                        _rest_ct_lines.append(_line)
+                    _rest_ct = ' '.join(_rest_ct_lines)
+                    for _pat in _REST_NAMES:
+                        if re.search(_pat, _rest_ct, re.I):
+                            bflags.append('Restaurant Booking')
+                            break
+
+                # ── Spa Bookings ─────────────────────────────────────────
+                _SPA_NAMES = [
+                    r'Anantara\s+Spa', r'Dhigu\s+Spa', r'Veli\s+Spa',
+                    r'spa\s+(?:booking|reserv|treatment|appoint|session)',
+                    r'(?:book|reserv)\w*\s+(?:at\s+)?(?:the\s+)?spa',
+                    r'(?:couples?|four\s+hands?|hot\s+stone|body|facial|swedish|deep\s+tissue)\s+massage',
+                    r'spa\s+(?:package|voucher|credit)',
+                ]
+                if not any('Spa' in f or 'spa' in f.lower() for f in bflags):
+                    _spa_ct_lines = []
+                    for _tk in sorted(_note_line_groups):
+                        _line = ' '.join(_w['text'] for _w in
+                                        sorted(_note_line_groups[_tk], key=lambda x: x['x0']))
+                        if re.match(r'Fixed\s+Charges|Adj\.', _line, re.I): continue
+                        _spa_ct_lines.append(_line)
+                    _spa_ct = ' '.join(_spa_ct_lines)
+                    for _pat in _SPA_NAMES:
+                        if re.search(_pat, _spa_ct, re.I):
+                            bflags.append('Spa Booking')
+                            break
+
+                # ── Activities ───────────────────────────────────────────
+                _ACT_PATS = [
+                    r'snorkel', r'scuba', r'\bdiv(?:ing?|e)\b',
+                    r'sunset\s+(?:cruise|sail|dhoni|trip|fishing)',
+                    r'sunrise\s+(?:cruise|fishing|trip)',
+                    r'fishing\s+trip', r'\bdolphin\b', r'\bwhale\b',
+                    r'\bkayak', r'\bsurf(?:ing)?\b',
+                    r'water\s*sport', r'watersport',
+                    r'sandbank\s+(?:picnic|trip|lunch|dinner)',
+                    r'beach\s+(?:dinner|bbq|picnic)',
+                    r'overwater\s+dinner', r'private\s+(?:dinner|picnic)',
+                    r'Activities\s+-\s+(?:Water|Diving|Snorkel|Sport)',
+                ]
+                if not any('Activit' in f for f in bflags):
+                    _act_ct_lines = []
+                    for _tk in sorted(_note_line_groups):
+                        _line = ' '.join(_w['text'] for _w in
+                                        sorted(_note_line_groups[_tk], key=lambda x: x['x0']))
+                        if re.match(r'Fixed\s+Charges|Adj\.', _line, re.I): continue
+                        _act_ct_lines.append(_line)
+                    _act_ct = ' '.join(_act_ct_lines)
+                    _acts_found = []
+                    for _pat in _ACT_PATS:
+                        _m = re.search(_pat, _act_ct, re.I)
+                        if _m:
+                            _acts_found.append(_m.group().strip())
+                    if _acts_found:
+                        bflags.append(f'Activities ({_acts_found[0]})')
 
                 # ── Potential VIP — improved: check notes, name, TA ─────
                 _VIP_ALREADY = any('VIP' in f or f in ('Platinum','Titanium','Gold','Silver','Red')
@@ -1461,6 +1580,9 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             if 'child' in fl: cats.append('children')
             if 'long stay' in fl: cats.append('longstay')
             if 'potential vip' in fl: cats.append('potvip')
+            if 'restaurant' in fl: cats.append('restaurant')
+            if 'spa' in fl: cats.append('spa')
+            if 'activit' in fl: cats.append('activity')
         if g['flight'] and 'NO ETA' in g['flight']: cats.append('noeta')
         if g['flight'] and g['flight'] not in ('', '--', '-', 'NO FLIGHT INFO'): cats.append('flight')
         if g['flight'] == 'NO FLIGHT INFO': cats.append('noflight')
@@ -1509,6 +1631,9 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
                 if 'child' in fl: cats_g.append('children')
                 if 'long stay' in fl: cats_g.append('longstay')
                 if 'potential vip' in fl: cats_g.append('potvip')
+                if 'restaurant' in fl: cats_g.append('restaurant')
+                if 'spa' in fl: cats_g.append('spa')
+                if 'activit' in fl: cats_g.append('activity')
             if g.get('flight') and g['flight'] not in ('','--','-','NO FLIGHT INFO'): cats_g.append('flight')
             if g.get('flight') and 'NO ETA' in g.get('flight',''): cats_g.append('noeta')
             if g.get('flight') == 'NO FLIGHT INFO': cats_g.append('noflight')
@@ -1536,6 +1661,9 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         ('children',   '👶', 'Children',   len([g for g in guests if any('Child' in f for f in g['flags'])]), 'children'),
         ('longstay',   '🌴', 'Long Stay',  len([g for g in guests if any('Long Stay' in f for f in g['flags'])]), 'longstay'),
         ('potvip',     '⚑',  'Pot. VIP',   len([g for g in guests if any('Potential VIP' in f for f in g['flags'])]), 'potvip'),
+        ('restaurant', '🍽️', 'Restaurant', len([g for g in guests if any('Restaurant' in f for f in g['flags'])]), 'restaurant'),
+        ('spa',        '💆', 'Spa',        len([g for g in guests if any('Spa' in f for f in g['flags'])]), 'spa'),
+        ('activity',   '🤿', 'Activities', len([g for g in guests if any('Activit' in f for f in g['flags'])]), 'activity'),
     ]
     stat_cards = ''
     for sid, icon, label, val, cat in stat_items:
@@ -1770,6 +1898,9 @@ const FLAG_COLORS = {{
   'No Flight Info':'#FCEBEB:#501313',
   'Long Stay':'#E1F5EE:#04342C',
   'Potential VIP':'#FAEEDA:#633806',
+  'Restaurant':'#E1F5EE:#04342C',
+  'Spa Booking':'#FBEAF0:#72243E',
+  'Activities':'#E6F1FB:#042C53',
 }};
 
 function flagColor(f) {{
@@ -1962,6 +2093,9 @@ function render(filterCat) {{
       else if (/no flight info/.test(fl)) cat='noflight';
       else if (/long stay/.test(fl)) cat='longstay';
       else if (/potential vip/.test(fl)) cat='potvip';
+      else if (/restaurant/.test(fl)) cat='restaurant';
+      else if (/spa booking/.test(fl)) cat='spa';
+      else if (/activit/.test(fl)) cat='activity';
       else if (/ek|ey|qr|g9|ku|gf|sq|ai|6e/.test(fl)) cat='flight';
       return `<span class="flag" style="${{flagColor(f)}}" title="Jump to related lines in report"
         onclick="goToBooking('${{g.anchor}}','${{cat}}',HLMAP['${{g.anchor}}'])">${{f}}</span>`;
@@ -2029,7 +2163,10 @@ function filterGuests(cat) {{
     'eci':'Early Check-in','lco':'Late Check-out','upgrade':'Upgrades','comp':'Complimentary','children':'With Children',
     'noflight':'No Flight Info',
     'longstay':'Long Stay (7+ nights)',
-    'potvip':'Potential VIP (title in notes)'
+    'potvip':'Potential VIP (title in notes)',
+    'restaurant':'Restaurant Bookings',
+    'spa':'Spa Bookings',
+    'activity':'Activities'
   }};
   document.getElementById('filter-tag').textContent = labels[cat] || cat;
   render(cat);
