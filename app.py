@@ -1911,6 +1911,24 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
 
     guests_js = json.dumps(guests_json)
 
+    # Build GHA level checkboxes
+    _GHA_LEVELS = [
+        ('Silver',   '#94a3b8'),
+        ('Gold',     '#b7960c'),
+        ('Red',      '#dc2626'),
+        ('Platinum', '#6366f1'),
+        ('Titanium', '#0f766e'),
+    ]
+    gha_checkboxes = ''.join(
+        f'<label style="display:flex;align-items:center;gap:3px;font-size:10px;'
+        f'cursor:pointer;user-select:none;white-space:nowrap">'
+        f'<input type="checkbox" class="gha-level-toggle" data-level="{lvl.lower()}" checked '
+        f'onchange="updateGHACount();render(currentFilter)" '
+        f'style="accent-color:{col};width:12px;height:12px;cursor:pointer">'
+        f'<span style="color:{col};font-weight:600">{lvl}</span></label>'
+        for lvl, col in _GHA_LEVELS
+    )
+
     # ── Payment missing summary data ─────────────────────────────────────
     pay_missing = [g for g in guests if any('Payment Not Received' in f for f in g['flags'])]
     pay_missing_js = json.dumps([{
@@ -2064,11 +2082,10 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
     <span class="filter-label">Showing:</span>
     <span class="filter-tag" id="filter-tag">All Bookings</span>
     <span class="count-badge" id="count-badge">{len(guests)} guests</span>
-    <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6b7280;cursor:pointer;margin-left:8px;user-select:none" title="Silver is GHA base level — uncheck to hide from GHA filter">
-      <input type="checkbox" id="silver-toggle" checked onchange="updateGHACount();render(currentFilter)"
-             style="accent-color:#1a56db;width:13px;height:13px;cursor:pointer">
-      Include GHA Silver
-    </label>
+    <div style="display:flex;align-items:center;gap:4px;margin-left:8px;flex-wrap:wrap">
+      <span style="font-size:10px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-right:2px">GHA:</span>
+      {gha_checkboxes}
+    </div>
     <button class="dl-pdf-btn" onclick="downloadPDF()" title="Download summary as PDF">⬇️ Download PDF</button>
   </div>
   <div class="table-wrap">
@@ -2431,14 +2448,24 @@ function render(filterCat) {{
   rowFlashIntervals.forEach(id => clearInterval(id));
   rowFlashIntervals = [];
   let shown = 0;
+  // Build set of excluded GHA levels from checkboxes
+  const excludedLevels = new Set();
+  document.querySelectorAll('.gha-level-toggle').forEach(cb => {{
+    if (!cb.checked) excludedLevels.add(cb.dataset.level);
+  }});
   GUESTS.forEach(g => {{
-    const silverToggle = document.getElementById('silver-toggle');
-    const includeSilver = silverToggle ? silverToggle.checked : true;
-    // Silver-only = has Silver flag but no higher GHA tier (Gold/Platinum/Titanium/Red)
-    const isSilverOnly = g.flags.some(f => /\bsilver\b/i.test(f))
-                      && !g.flags.some(f => /\b(platinum|titanium|gold|red)\b/i.test(f));
-    // Completely skip Silver-only guests when unchecked and GHA filter is active
-    if (!includeSilver && isSilverOnly && filterCat === 'membership') return;
+    // Detect GHA level — exact match on lowercase flag text
+    let ghaLevel = null;
+    for (const f of g.flags) {{
+      const fl = f.toLowerCase().trim();
+      if (fl === 'silver')   {{ ghaLevel = 'silver';   break; }}
+      if (fl === 'gold')     {{ ghaLevel = 'gold';     break; }}
+      if (fl === 'red')      {{ ghaLevel = 'red';      break; }}
+      if (fl === 'platinum') {{ ghaLevel = 'platinum'; break; }}
+      if (fl === 'titanium') {{ ghaLevel = 'titanium'; break; }}
+    }}
+    // Skip entirely when level is unchecked and GHA filter is active
+    if (ghaLevel && excludedLevels.has(ghaLevel) && filterCat === 'membership') return;
     const match = (filterCat === 'all' || g.cats.includes(filterCat));
     const tr = document.createElement('tr');
     tr.dataset.cats = g.cats.join(' ');
@@ -2585,17 +2612,24 @@ function filterGuests(cat) {{
 }}
 
 function updateGHACount() {{
-  const silverToggle = document.getElementById('silver-toggle');
-  const includeSilver = silverToggle ? silverToggle.checked : true;
+  const excludedLevels = new Set();
+  document.querySelectorAll('.gha-level-toggle').forEach(cb => {{
+    if (!cb.checked) excludedLevels.add(cb.dataset.level);
+  }});
   const ghaCard = document.querySelector('[data-cat="membership"] .stat-num');
   if (!ghaCard) return;
   const count = GUESTS.filter(g => {{
     if (!g.cats.includes('membership')) return false;
-    if (!includeSilver) {{
-      const isSilverOnly = g.flags.some(f => /\bsilver\b/i.test(f))
-                        && !g.flags.some(f => /\b(platinum|titanium|gold|red)\b/i.test(f));
-      if (isSilverOnly) return false;
+    let ghaLevel = null;
+    for (const f of g.flags) {{
+      const fl = f.toLowerCase().trim();
+      if (fl === 'silver')   {{ ghaLevel = 'silver';   break; }}
+      if (fl === 'gold')     {{ ghaLevel = 'gold';     break; }}
+      if (fl === 'red')      {{ ghaLevel = 'red';      break; }}
+      if (fl === 'platinum') {{ ghaLevel = 'platinum'; break; }}
+      if (fl === 'titanium') {{ ghaLevel = 'titanium'; break; }}
     }}
+    if (ghaLevel && excludedLevels.has(ghaLevel)) return false;
     return true;
   }}).length;
   ghaCard.textContent = count;
