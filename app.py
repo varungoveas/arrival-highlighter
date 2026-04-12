@@ -3024,6 +3024,159 @@ td{{padding:9px 11px;border-bottom:1.5px solid #f1f5f9;vertical-align:top}}
 </html>'''
 
 
+def build_payment_excel(summary_data):
+    """Build a properly styled .xlsx for Payment Not Received bookings."""
+    from openpyxl import Workbook
+    from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side,
+                                  GradientFill)
+    from openpyxl.utils import get_column_letter
+    import io as _io
+
+    guests = summary_data.get('guests', [])
+    pay_missing = [g for g in guests if any('Payment Not Received' in f for f in g['flags'])]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Payment Missing'
+
+    # ── Colour palette ──────────────────────────────────────────
+    C_HEADER_BG  = '1A1A2E'   # dark navy
+    C_HEADER_FG  = 'FFFFFF'
+    C_TITLE_BG   = 'E24B4A'   # red accent
+    C_COL_HDR_BG = 'F8FAFC'
+    C_COL_HDR_FG = '374151'
+    C_ROW_EVEN   = 'FFFFFF'
+    C_ROW_ODD    = 'F8FAFC'
+    C_MANUAL_BG  = 'FFFDE7'   # yellow — manual entry columns
+    C_MANUAL_FG  = '92400E'
+    C_BORDER     = 'E2E8F0'
+    C_DEPOSIT_FG = 'DC2626'   # red for zero deposit
+
+    def fill(hex_):  return PatternFill('solid', fgColor=hex_)
+    def font(bold=False, sz=10, color='1E2535', italic=False):
+        return Font(name='Arial', bold=bold, size=sz, color=color, italic=italic)
+    def border():
+        s = Side(style='thin', color=C_BORDER)
+        return Border(left=s, right=s, top=s, bottom=s)
+    def center(): return Alignment(horizontal='center', vertical='center', wrap_text=True)
+    def left():   return Alignment(horizontal='left',   vertical='center', wrap_text=False)
+    def right():  return Alignment(horizontal='right',  vertical='center')
+
+    # ── Title row (row 1) ────────────────────────────────────────
+    ws.merge_cells('A1:K1')
+    ws['A1'] = '🚨  PAYMENT NOT RECEIVED — FOLLOW UP REQUIRED'
+    ws['A1'].font      = Font(name='Arial', bold=True, size=13, color=C_HEADER_FG)
+    ws['A1'].fill      = fill(C_HEADER_BG)
+    ws['A1'].alignment = Alignment(horizontal='left', vertical='center')
+    ws.row_dimensions[1].height = 28
+
+    # ── Sub-title row (row 2) ────────────────────────────────────
+    prop = summary_data.get('property','')
+    dt   = summary_data.get('date','')
+    ws.merge_cells('A2:K2')
+    ws['A2'] = f"{prop}   |   Arrival Date: {dt}   |   {len(pay_missing)} booking(s) outstanding"
+    ws['A2'].font      = Font(name='Arial', size=10, color='94A3B8')
+    ws['A2'].fill      = fill(C_HEADER_BG)
+    ws['A2'].alignment = Alignment(horizontal='left', vertical='center')
+    ws.row_dimensions[2].height = 20
+
+    # ── Blank spacer row (row 3) ─────────────────────────────────
+    ws.row_dimensions[3].height = 6
+
+    # ── Column headers (row 4) ───────────────────────────────────
+    COLS = [
+        ('Room',               8,  False),
+        ('Guest Name',         26, False),
+        ('Conf No.',           14, False),
+        ('Travel Agent',       24, False),
+        ('Check-in',           11, False),
+        ('Check-out',          11, False),
+        ('Nights',              7, False),
+        ('Rate Code',          14, False),
+        ('Deposit (USD)',       14, False),
+        ('Booking Created By', 22, True),   # manual — yellow
+        ('Remarks',            32, True),   # manual — yellow
+    ]
+    for ci, (label, width, is_manual) in enumerate(COLS, start=1):
+        cell = ws.cell(row=4, column=ci, value=label)
+        cell.font      = Font(name='Arial', bold=True, size=10,
+                               color='FFFFFF' if not is_manual else C_MANUAL_FG)
+        cell.fill      = fill('2D3748' if not is_manual else 'F59E0B')
+        cell.alignment = center()
+        cell.border    = border()
+        ws.column_dimensions[get_column_letter(ci)].width = width
+    ws.row_dimensions[4].height = 22
+
+    # ── Data rows ─────────────────────────────────────────────────
+    for ri, g in enumerate(pay_missing):
+        row_num  = 5 + ri
+        is_even  = ri % 2 == 0
+        row_bg   = C_ROW_EVEN if is_even else C_ROW_ODD
+
+        values = [
+            g['room'],
+            g['name'],
+            g.get('conf',''),
+            g.get('ta',''),
+            g.get('checkin',''),
+            g.get('checkout',''),
+            g.get('nights', 0),
+            g.get('rate_code',''),
+            g.get('deposit', 0.0),
+            '',   # Booking Created By
+            '',   # Remarks
+        ]
+        for ci, val in enumerate(values, start=1):
+            cell = ws.cell(row=row_num, column=ci, value=val)
+            is_manual = ci >= 10
+            cell.border = border()
+            cell.font   = font(sz=10, color=C_MANUAL_FG if is_manual else '1E2535',
+                               italic=is_manual)
+            cell.fill   = fill(C_MANUAL_BG if is_manual else row_bg)
+            if ci == 1:   # Room — bold centred
+                cell.font      = font(bold=True, sz=11)
+                cell.alignment = center()
+            elif ci == 9:  # Deposit — right-aligned, red if zero
+                cell.number_format = '#,##0.00'
+                cell.alignment     = right()
+                cell.font          = font(bold=True, sz=10,
+                                          color=C_DEPOSIT_FG if (val or 0) == 0 else '059669')
+            elif ci == 7:  # Nights — centred
+                cell.alignment = center()
+            else:
+                cell.alignment = left()
+        ws.row_dimensions[row_num].height = 18
+
+    # ── No data message ───────────────────────────────────────────
+    if not pay_missing:
+        ws.merge_cells('A5:K5')
+        ws['A5'] = '✅  No outstanding payments — all bookings have deposits or are on credit accounts'
+        ws['A5'].font      = Font(name='Arial', size=11, color='059669', italic=True)
+        ws['A5'].alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[5].height = 30
+
+    # ── Freeze panes below header row ────────────────────────────
+    ws.freeze_panes = 'A5'
+
+    # ── Auto-filter ───────────────────────────────────────────────
+    if pay_missing:
+        ws.auto_filter.ref = f"A4:K{4 + len(pay_missing)}"
+
+    # ── Legend row at bottom ──────────────────────────────────────
+    legend_row = 6 + len(pay_missing)
+    ws.merge_cells(f'A{legend_row}:K{legend_row}')
+    ws[f'A{legend_row}'] = '💡  Columns highlighted in amber (Booking Created By / Remarks) are for manual entry by your Reservations team.'
+    ws[f'A{legend_row}'].font      = Font(name='Arial', size=9, color='92400E', italic=True)
+    ws[f'A{legend_row}'].fill      = fill('FFFDE7')
+    ws[f'A{legend_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws.row_dimensions[legend_row].height = 18
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # ── UI ───────────────────────────────────────────────────────────────────
 st.markdown("## 🏝️ Arrival Report Highlighter")
 st.markdown("**Anantara Veli · Anantara Dhigu · Naladhu Private Island**")
@@ -3080,11 +3233,15 @@ with col_right:
                     out_name  = f"{base}_{today}_highlighted.pdf"
                     html_name = f"{base}_{today}_summary.html"
                     summary_html  = build_summary_html(summary_data, pdf_filename=out_name)
+                    excel_name    = f"{base}_{today}_payment_missing.xlsx"
+                    excel_bytes   = build_payment_excel(summary_data)
                     st.session_state['results'].append({
                         'name': out_name, 'html_name': html_name,
+                        'excel_name': excel_name,
                         'original': fname,
                         'bytes': result_bytes,
                         'html': summary_html.encode('utf-8'),
+                        'excel': excel_bytes,
                         'counts': counts,
                         'total': total,
                         'summary_data': summary_data,
@@ -3115,7 +3272,7 @@ with col_right:
                             {r['total']} highlights — {cat_summary}
                         </span>
                     </div>""", unsafe_allow_html=True)
-                    col_a, col_b = st.columns(2)
+                    col_a, col_b, col_c = st.columns(3)
                     with col_a:
                         st.download_button(
                             label="⬇️ Download Highlighted PDF",
@@ -3128,6 +3285,16 @@ with col_right:
                             data=r['html'], file_name=r['html_name'],
                             mime='text/html', use_container_width=True,
                             key=f"html_{r['html_name']}")
+                    with col_c:
+                        pay_count = len([g for g in r['summary_data']['guests']
+                                         if any('Payment Not Received' in f for f in g['flags'])])
+                        st.download_button(
+                            label=f"📊 Payment Missing ({pay_count})",
+                            data=r.get('excel', b''), file_name=r.get('excel_name','payment.xlsx'),
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            use_container_width=True,
+                            key=f"xl_{r['name']}",
+                            disabled=pay_count == 0)
                     st.markdown("**Interactive Summary Preview:**")
                     st.components.v1.html(r['html'].decode('utf-8'), height=600, scrolling=True)
                 else:
