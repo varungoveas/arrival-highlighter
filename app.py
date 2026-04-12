@@ -2240,124 +2240,144 @@ function exportPaymentExcel() {{
     return;
   }}
 
-  // Load SheetJS dynamically
+  // Load ExcelJS — supports full cell styling unlike SheetJS free
   const script = document.createElement('script');
-  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-  script.onload = function() {{
-    const XLSX = window.XLSX;
-    const wb = XLSX.utils.book_new();
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js';
+  script.onload = async function() {{
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Arrival Highlighter';
+    const ws = wb.addWorksheet('Payment Missing');
 
-    // ── Header info rows ────────────────────────────────────────
-    const today = new Date().toLocaleDateString('en-GB', {{day:'2-digit',month:'short',year:'numeric'}});
     const prop = document.querySelector('.property')?.textContent?.trim() || '';
-    const infoRows = [
-      ['Payment Not Received — Follow Up Required'],
-      [prop + '   |   Arrival Date: ' + (document.querySelector('.header-sub')?.textContent?.split('·')[0]?.trim() || today)],
-      ['Generated: ' + today],
-      [],
-    ];
+    const arrDate = document.querySelector('.header-sub')?.textContent?.split('·')[0]?.trim() || '';
+    const today = new Date().toLocaleDateString('en-GB',{{day:'2-digit',month:'short',year:'numeric'}});
 
-    // ── Column headers ───────────────────────────────────────────
-    const headers = [
-      'Room','Guest Name','Conf No.','Travel Agent',
-      'Check-in','Check-out','Nights','Rate Code',
-      'Deposit (USD)','Booking Created By','Remarks'
-    ];
-
-    // ── Data rows ────────────────────────────────────────────────
-    const dataRows = PAY_MISSING.map(g => [
-      g.room, g.name, g.conf, g.ta || '',
-      g.checkin || '', g.checkout || '',
-      g.nights || 0, g.rate_code || '',
-      g.deposit != null ? parseFloat(g.deposit.toFixed(2)) : 0,
-      '', ''   // Booking Created By + Remarks — blank for manual entry
-    ]);
-
-    // Combine all rows
-    const allRows = [...infoRows, headers, ...dataRows];
-    const ws = XLSX.utils.aoa_to_sheet(allRows);
-
-    // ── Column widths ────────────────────────────────────────────
-    ws['!cols'] = [
-      {{wch:8}},  // Room
-      {{wch:26}}, // Guest Name
-      {{wch:14}}, // Conf No.
-      {{wch:24}}, // Travel Agent
-      {{wch:11}}, // Check-in
-      {{wch:11}}, // Check-out
-      {{wch:7}},  // Nights
-      {{wch:14}}, // Rate Code
-      {{wch:14}}, // Deposit
-      {{wch:22}}, // Created By
-      {{wch:30}}, // Remarks
-    ];
-
-    // ── Header row styling (row 5 = index 4 after 4 info rows) ──
-    const headerRowIdx = infoRows.length; // 0-based
-    const numCols = headers.length;
-
-    // Style header cells
-    for (let c = 0; c < numCols; c++) {{
-      const cellRef = XLSX.utils.encode_cell({{r: headerRowIdx, c}});
-      if (!ws[cellRef]) ws[cellRef] = {{v: headers[c], t:'s'}};
-      ws[cellRef].s = {{
-        font:    {{ bold: true, color: {{ rgb: 'FFFFFF' }}, sz: 11 }},
-        fill:    {{ fgColor: {{ rgb: '1A1A2E' }}, patternType: 'solid' }},
-        alignment: {{ horizontal: 'center', vertical: 'center', wrapText: true }},
-        border:  {{ bottom: {{ style:'thin', color:{{rgb:'CCCCCC'}} }} }},
-      }};
-    }}
-
-    // ── Data row styling ─────────────────────────────────────────
-    for (let r = 0; r < dataRows.length; r++) {{
-      const rowIdx = headerRowIdx + 1 + r;
-      const isEven = r % 2 === 0;
-      const bgColor = isEven ? 'FFFFFF' : 'F8FAFC';
-      for (let c = 0; c < numCols; c++) {{
-        const cellRef = XLSX.utils.encode_cell({{r: rowIdx, c}});
-        if (!ws[cellRef]) ws[cellRef] = {{v: '', t:'s'}};
-        ws[cellRef].s = {{
-          fill: {{ fgColor: {{ rgb: bgColor }}, patternType: 'solid' }},
-          font: {{ sz: 10, color: {{ rgb: c === 9 || c === 10 ? '94A3B8' : '1E2535' }} }},
-          alignment: {{ vertical: 'center', wrapText: false }},
-          border: {{
-            bottom: {{ style: 'thin', color: {{ rgb: 'E2E8F0' }} }},
-            right:  {{ style: 'thin', color: {{ rgb: 'E2E8F0' }} }},
-          }},
-        }};
-        // Deposit col: right-align and number format
-        if (c === 8) {{
-          ws[cellRef].s.alignment = {{ horizontal: 'right', vertical: 'center' }};
-          ws[cellRef].z = '#,##0.00';
-        }}
-        // Created By / Remarks cols: light yellow background to signal manual entry
-        if (c === 9 || c === 10) {{
-          ws[cellRef].s.fill = {{ fgColor: {{ rgb: 'FFFDE7' }}, patternType: 'solid' }};
-          ws[cellRef].s.font = {{ sz: 10, color: {{ rgb: '92400E' }}, italic: true }};
-        }}
-      }}
-    }}
-
-    // ── Title row styling ────────────────────────────────────────
-    const titleRef = XLSX.utils.encode_cell({{r:0, c:0}});
-    if (ws[titleRef]) ws[titleRef].s = {{
-      font: {{ bold: true, sz: 13, color: {{ rgb: '1A1A2E' }} }},
+    // ── Helpers ──────────────────────────────────────────────────
+    const navyFill  = {{ type:'pattern', pattern:'solid', fgColor:{{argb:'FF1A1A2E'}} }};
+    const amberFill = {{ type:'pattern', pattern:'solid', fgColor:{{argb:'FFF59E0B'}} }};
+    const yellowFill= {{ type:'pattern', pattern:'solid', fgColor:{{argb:'FFFFFDE7'}} }};
+    const evenFill  = {{ type:'pattern', pattern:'solid', fgColor:{{argb:'FFFFFFFF'}} }};
+    const oddFill   = {{ type:'pattern', pattern:'solid', fgColor:{{argb:'FFF8FAFC'}} }};
+    const thinBorder = {{
+      top:   {{style:'thin', color:{{argb:'FFE2E8F0'}}}},
+      left:  {{style:'thin', color:{{argb:'FFE2E8F0'}}}},
+      bottom:{{style:'thin', color:{{argb:'FFE2E8F0'}}}},
+      right: {{style:'thin', color:{{argb:'FFE2E8F0'}}}},
     }};
 
-    // ── Freeze header row ────────────────────────────────────────
-    ws['!freeze'] = {{ xSplit: 0, ySplit: headerRowIdx + 1 }};
+    // ── Column definitions ───────────────────────────────────────
+    ws.columns = [
+      {{key:'room',   width:9}},
+      {{key:'name',   width:27}},
+      {{key:'conf',   width:15}},
+      {{key:'ta',     width:25}},
+      {{key:'ci',     width:12}},
+      {{key:'co',     width:12}},
+      {{key:'nts',    width:8}},
+      {{key:'rate',   width:15}},
+      {{key:'dep',    width:15}},
+      {{key:'createdby', width:23}},
+      {{key:'remarks',   width:33}},
+    ];
 
-    // ── Auto-filter on header row ─────────────────────────────────
-    ws['!autofilter'] = {{ ref: XLSX.utils.encode_range({{
-      s: {{r: headerRowIdx, c: 0}},
-      e: {{r: headerRowIdx + dataRows.length, c: numCols - 1}}
-    }}) }};
+    // ── Row 1: Title ─────────────────────────────────────────────
+    const r1 = ws.addRow(['🚨  PAYMENT NOT RECEIVED — FOLLOW UP REQUIRED','','','','','','','','','','']);
+    ws.mergeCells('A1:K1');
+    r1.height = 28;
+    r1.getCell(1).font      = {{name:'Arial', bold:true, size:13, color:{{argb:'FFFFFFFF'}}}};
+    r1.getCell(1).fill      = navyFill;
+    r1.getCell(1).alignment = {{vertical:'middle', horizontal:'left'}};
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Payment Missing');
+    // ── Row 2: Sub-title ─────────────────────────────────────────
+    const r2 = ws.addRow([`${{prop}}   |   Arrival Date: ${{arrDate}}   |   ${{PAY_MISSING.length}} booking(s) outstanding`,'','','','','','','','','','']);
+    ws.mergeCells('A2:K2');
+    r2.height = 20;
+    r2.getCell(1).font      = {{name:'Arial', size:10, color:{{argb:'FF94A3B8'}}}};
+    r2.getCell(1).fill      = navyFill;
+    r2.getCell(1).alignment = {{vertical:'middle', horizontal:'left'}};
 
-    // ── Download ─────────────────────────────────────────────────
+    // ── Row 3: Spacer ─────────────────────────────────────────────
+    ws.addRow([]);
+    ws.getRow(3).height = 6;
+
+    // ── Row 4: Column headers ─────────────────────────────────────
+    const HEADERS = ['Room','Guest Name','Conf No.','Travel Agent','Check-in','Check-out','Nights','Rate Code','Deposit (USD)','Booking Created By','Remarks'];
+    const r4 = ws.addRow(HEADERS);
+    r4.height = 22;
+    r4.eachCell((cell, colNum) => {{
+      const isManual = colNum >= 10;
+      cell.font      = {{name:'Arial', bold:true, size:10,
+                         color:{{argb: isManual ? 'FF92400E' : 'FFFFFFFF'}}}};
+      cell.fill      = isManual ? amberFill : navyFill;
+      cell.alignment = {{horizontal:'center', vertical:'middle', wrapText:true}};
+      cell.border    = thinBorder;
+    }});
+
+    // ── Data rows ─────────────────────────────────────────────────
+    PAY_MISSING.forEach((g, idx) => {{
+      const isEven = idx % 2 === 0;
+      const rowFill = isEven ? evenFill : oddFill;
+      const row = ws.addRow([
+        g.room, g.name, g.conf, g.ta || '',
+        g.checkin || '', g.checkout || '',
+        g.nights || 0, g.rate_code || '',
+        g.deposit != null ? parseFloat(g.deposit.toFixed(2)) : 0,
+        '', ''
+      ]);
+      row.height = 18;
+      row.eachCell({{includeEmpty:true}}, (cell, colNum) => {{
+        const isManual = colNum >= 10;
+        cell.border    = thinBorder;
+        cell.fill      = isManual ? yellowFill : rowFill;
+        if (colNum === 1) {{
+          cell.font      = {{name:'Arial', bold:true, size:11, color:{{argb:'FF1A1A2E'}}}};
+          cell.alignment = {{horizontal:'center', vertical:'middle'}};
+        }} else if (colNum === 9) {{
+          const depVal = g.deposit || 0;
+          cell.font         = {{name:'Arial', bold:true, size:10,
+                               color:{{argb: depVal === 0 ? 'FFDC2626' : 'FF059669'}}}};
+          cell.alignment    = {{horizontal:'right', vertical:'middle'}};
+          cell.numFmt       = '#,##0.00';
+        }} else if (colNum === 7) {{
+          cell.font      = {{name:'Arial', size:10, color:{{argb:'FF374151'}}}};
+          cell.alignment = {{horizontal:'center', vertical:'middle'}};
+        }} else if (isManual) {{
+          cell.font      = {{name:'Arial', size:10, italic:true, color:{{argb:'FF92400E'}}}};
+          cell.alignment = {{horizontal:'left', vertical:'middle'}};
+        }} else {{
+          cell.font      = {{name:'Arial', size:10, color:{{argb:'FF1E2535'}}}};
+          cell.alignment = {{horizontal:'left', vertical:'middle'}};
+        }}
+      }});
+    }});
+
+    // ── Legend row ────────────────────────────────────────────────
+    ws.addRow([]);
+    const legendRow = ws.addRow(['💡  Columns highlighted in amber (Booking Created By / Remarks) are for manual entry by your Reservations team.','','','','','','','','','','']);
+    ws.mergeCells(`A${{legendRow.number}}:K${{legendRow.number}}`);
+    legendRow.height = 18;
+    legendRow.getCell(1).font      = {{name:'Arial', size:9, italic:true, color:{{argb:'FF92400E'}}}};
+    legendRow.getCell(1).fill      = yellowFill;
+    legendRow.getCell(1).alignment = {{horizontal:'left', vertical:'middle'}};
+
+    // ── Freeze header row ─────────────────────────────────────────
+    ws.views = [{{ state:'frozen', xSplit:0, ySplit:4, activeCell:'A5' }}];
+
+    // ── Auto-filter ───────────────────────────────────────────────
+    ws.autoFilter = {{ from:'A4', to:`K${{4 + PAY_MISSING.length}}` }};
+
+    // ── Download ──────────────────────────────────────────────────
+    const buf  = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], {{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
     const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
-    XLSX.writeFile(wb, 'PaymentMissing_' + dateStr + '.xlsx');
+    a.href     = url;
+    a.download = 'PaymentMissing_' + dateStr + '.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }};
   script.onerror = function() {{
     alert('Could not load Excel library. Please check your internet connection.');
