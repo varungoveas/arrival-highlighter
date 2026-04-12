@@ -2105,31 +2105,50 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 
 <div id="section-payment" style="display:none;padding:20px 24px">
   <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden">
-    <div style="background:#1a1a2e;color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px">
-      <span style="font-size:18px">🚨</span>
-      <div>
-        <div style="font-weight:700;font-size:15px">Payment Not Received</div>
-        <div style="font-size:11px;color:#94a3b8;margin-top:2px">Bookings with zero deposit — not on credit account — follow up required</div>
+    <div style="background:#1a1a2e;color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+        <span style="font-size:20px">🚨</span>
+        <div>
+          <div style="font-weight:700;font-size:15px">Payment Not Received</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px">Zero deposit · Not on credit account · Follow up required</div>
+        </div>
       </div>
-      <span id="pay-total-badge" style="margin-left:auto;background:#E24B4A;color:#fff;border-radius:20px;padding:4px 14px;font-size:12px;font-weight:700"></span>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <span id="pay-total-badge" style="background:#E24B4A;color:#fff;border-radius:20px;padding:5px 14px;font-size:12px;font-weight:700"></span>
+        <button onclick="exportPaymentExcel()"
+          style="background:#217346;color:#fff;border:none;border-radius:8px;padding:7px 14px;
+                 font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;
+                 gap:5px;white-space:nowrap;transition:background .15s"
+          onmouseover="this.style.background='#1a5c38'" onmouseout="this.style.background='#217346'">
+          📊 Export Excel
+        </button>
+      </div>
+    </div>
+    <div style="background:#fffbeb;border-bottom:1px solid #fde68a;padding:8px 20px;font-size:11px;color:#92400e;display:flex;align-items:center;gap:6px">
+      <span>💡</span>
+      <span>The Excel export includes <strong>Booking Created By</strong> and <strong>Remarks</strong> columns (highlighted in yellow) for manual follow-up tracking.</span>
     </div>
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
-    <table style="width:100%;border-collapse:collapse;min-width:600px">
+    <table style="width:100%;border-collapse:collapse;min-width:650px">
       <thead>
         <tr style="background:#f8fafc">
-          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Room</th>
-          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Guest</th>
-          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Conf No.</th>
-          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Travel Agent</th>
-          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Stay</th>
-          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Rate Code</th>
-          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Deposit</th>
-          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Action</th>
+          <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:2px solid #e2e8f0;white-space:nowrap">Room</th>
+          <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:2px solid #e2e8f0">Guest</th>
+          <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:2px solid #e2e8f0;white-space:nowrap">Conf No.</th>
+          <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:2px solid #e2e8f0">Travel Agent</th>
+          <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:2px solid #e2e8f0;white-space:nowrap">Stay</th>
+          <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:2px solid #e2e8f0;white-space:nowrap">Rate Code</th>
+          <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:2px solid #e2e8f0;white-space:nowrap">Deposit</th>
+          <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:2px solid #e2e8f0;white-space:nowrap">Action</th>
         </tr>
       </thead>
       <tbody id="pay-tbody"></tbody>
     </table>
-    <div id="pay-no-results" style="text-align:center;padding:40px;color:#94a3b8;font-size:14px;display:none">✅ No outstanding payments for this arrival</div>
+    <div id="pay-no-results" style="text-align:center;padding:48px;color:#94a3b8;font-size:14px;display:none">
+      <div style="font-size:32px;margin-bottom:10px">✅</div>
+      <div style="font-weight:600;color:#374151">No outstanding payments</div>
+      <div style="font-size:12px;margin-top:4px">All bookings have received deposits or are on credit accounts</div>
+    </div>
     </div>
   </div>
 </div>
@@ -2213,6 +2232,137 @@ function showSection(which) {{
     if (tab) tab.classList.toggle('active', s===which);
   }});
   if (which === 'payment') renderPayment();
+}}
+
+function exportPaymentExcel() {{
+  if (!PAY_MISSING || PAY_MISSING.length === 0) {{
+    alert('No outstanding payments to export.');
+    return;
+  }}
+
+  // Load SheetJS dynamically
+  const script = document.createElement('script');
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  script.onload = function() {{
+    const XLSX = window.XLSX;
+    const wb = XLSX.utils.book_new();
+
+    // ── Header info rows ────────────────────────────────────────
+    const today = new Date().toLocaleDateString('en-GB', {{day:'2-digit',month:'short',year:'numeric'}});
+    const prop = document.querySelector('.property')?.textContent?.trim() || '';
+    const infoRows = [
+      ['Payment Not Received — Follow Up Required'],
+      [prop + '   |   Arrival Date: ' + (document.querySelector('.header-sub')?.textContent?.split('·')[0]?.trim() || today)],
+      ['Generated: ' + today],
+      [],
+    ];
+
+    // ── Column headers ───────────────────────────────────────────
+    const headers = [
+      'Room','Guest Name','Conf No.','Travel Agent',
+      'Check-in','Check-out','Nights','Rate Code',
+      'Deposit (USD)','Booking Created By','Remarks'
+    ];
+
+    // ── Data rows ────────────────────────────────────────────────
+    const dataRows = PAY_MISSING.map(g => [
+      g.room, g.name, g.conf, g.ta || '',
+      g.checkin || '', g.checkout || '',
+      g.nights || 0, g.rate_code || '',
+      g.deposit != null ? parseFloat(g.deposit.toFixed(2)) : 0,
+      '', ''   // Booking Created By + Remarks — blank for manual entry
+    ]);
+
+    // Combine all rows
+    const allRows = [...infoRows, headers, ...dataRows];
+    const ws = XLSX.utils.aoa_to_sheet(allRows);
+
+    // ── Column widths ────────────────────────────────────────────
+    ws['!cols'] = [
+      {{wch:8}},  // Room
+      {{wch:26}}, // Guest Name
+      {{wch:14}}, // Conf No.
+      {{wch:24}}, // Travel Agent
+      {{wch:11}}, // Check-in
+      {{wch:11}}, // Check-out
+      {{wch:7}},  // Nights
+      {{wch:14}}, // Rate Code
+      {{wch:14}}, // Deposit
+      {{wch:22}}, // Created By
+      {{wch:30}}, // Remarks
+    ];
+
+    // ── Header row styling (row 5 = index 4 after 4 info rows) ──
+    const headerRowIdx = infoRows.length; // 0-based
+    const numCols = headers.length;
+
+    // Style header cells
+    for (let c = 0; c < numCols; c++) {{
+      const cellRef = XLSX.utils.encode_cell({{r: headerRowIdx, c}});
+      if (!ws[cellRef]) ws[cellRef] = {{v: headers[c], t:'s'}};
+      ws[cellRef].s = {{
+        font:    {{ bold: true, color: {{ rgb: 'FFFFFF' }}, sz: 11 }},
+        fill:    {{ fgColor: {{ rgb: '1A1A2E' }}, patternType: 'solid' }},
+        alignment: {{ horizontal: 'center', vertical: 'center', wrapText: true }},
+        border:  {{ bottom: {{ style:'thin', color:{{rgb:'CCCCCC'}} }} }},
+      }};
+    }}
+
+    // ── Data row styling ─────────────────────────────────────────
+    for (let r = 0; r < dataRows.length; r++) {{
+      const rowIdx = headerRowIdx + 1 + r;
+      const isEven = r % 2 === 0;
+      const bgColor = isEven ? 'FFFFFF' : 'F8FAFC';
+      for (let c = 0; c < numCols; c++) {{
+        const cellRef = XLSX.utils.encode_cell({{r: rowIdx, c}});
+        if (!ws[cellRef]) ws[cellRef] = {{v: '', t:'s'}};
+        ws[cellRef].s = {{
+          fill: {{ fgColor: {{ rgb: bgColor }}, patternType: 'solid' }},
+          font: {{ sz: 10, color: {{ rgb: c === 9 || c === 10 ? '94A3B8' : '1E2535' }} }},
+          alignment: {{ vertical: 'center', wrapText: false }},
+          border: {{
+            bottom: {{ style: 'thin', color: {{ rgb: 'E2E8F0' }} }},
+            right:  {{ style: 'thin', color: {{ rgb: 'E2E8F0' }} }},
+          }},
+        }};
+        // Deposit col: right-align and number format
+        if (c === 8) {{
+          ws[cellRef].s.alignment = {{ horizontal: 'right', vertical: 'center' }};
+          ws[cellRef].z = '#,##0.00';
+        }}
+        // Created By / Remarks cols: light yellow background to signal manual entry
+        if (c === 9 || c === 10) {{
+          ws[cellRef].s.fill = {{ fgColor: {{ rgb: 'FFFDE7' }}, patternType: 'solid' }};
+          ws[cellRef].s.font = {{ sz: 10, color: {{ rgb: '92400E' }}, italic: true }};
+        }}
+      }}
+    }}
+
+    // ── Title row styling ────────────────────────────────────────
+    const titleRef = XLSX.utils.encode_cell({{r:0, c:0}});
+    if (ws[titleRef]) ws[titleRef].s = {{
+      font: {{ bold: true, sz: 13, color: {{ rgb: '1A1A2E' }} }},
+    }};
+
+    // ── Freeze header row ────────────────────────────────────────
+    ws['!freeze'] = {{ xSplit: 0, ySplit: headerRowIdx + 1 }};
+
+    // ── Auto-filter on header row ─────────────────────────────────
+    ws['!autofilter'] = {{ ref: XLSX.utils.encode_range({{
+      s: {{r: headerRowIdx, c: 0}},
+      e: {{r: headerRowIdx + dataRows.length, c: numCols - 1}}
+    }}) }};
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Payment Missing');
+
+    // ── Download ─────────────────────────────────────────────────
+    const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    XLSX.writeFile(wb, 'PaymentMissing_' + dateStr + '.xlsx');
+  }};
+  script.onerror = function() {{
+    alert('Could not load Excel library. Please check your internet connection.');
+  }};
+  document.head.appendChild(script);
 }}
 
 function renderPayment() {{
