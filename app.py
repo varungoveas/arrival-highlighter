@@ -257,6 +257,8 @@ def build_summary_page(summary_data):
                 bg, fg = '#FAEEDA','#633806'
             elif 'potential lqa' in fl:
                 bg, fg = '#FCEBEB','#501313'
+            elif 'payment not received' in fl:
+                bg, fg = '#FCEBEB','#501313'
             else:
                 bg, fg = '#F1EFE8','#2C2C2A'
             parts.append(f'<font size="7" color="{fg}" backColor="{bg}"> {f} </font>')
@@ -880,8 +882,11 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 d_match = re.search(r'D\$\s*([0-9]+(?:\.[0-9]+)?)', ct)
                 if d_match and float(d_match.group(1)) > 0:
                     bflags.append(f"D$ {d_match.group(1)}")
-                # No flight info
-                if not flight_text:
+                # No flight info — only flag when Carr. Code is blank or SBA/SBR
+                # Airport/APT/OTH/RMV/FERRY means seaplane/other transport — no flight expected
+                _carr_is_air_transport = bool(re.search(
+                    r'\b(Airport|APT|OTH|RMV|FERRY|TRF)\b', arr_method, re.I))
+                if not flight_text and not _carr_is_air_transport:
                     bflags.append('No Flight Info')
 
                 # ── Restaurant Bookings ──────────────────────────────────
@@ -1022,7 +1027,39 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 if together:
                     bflags.append(f"Together: {', '.join(together)}")
 
-                # ── Sharer Missing ───────────────────────────────────────
+                # ── Payment Not Received ─────────────────────────────────
+                # Credit TAs — bookings from these don't need deposit upfront
+                _CREDIT_TAS = {
+                    'avc club developer', 'abercrombie & kent', 'abercrombie and kent',
+                    'british airways holidays', 'catai tours', 'classic vacations',
+                    'der touristik', 'descubre viajes', 'destinology',
+                    'dnata', 'dnata holidays', 'dnata travel',
+                    'helloworld', 'helloword travel',
+                    'hotel beds', 'hotelbeds',
+                    'hummingbird', 'hummingbird heymaa',
+                    'intour maldives', 'inpac japan',
+                    'international rawnaq', 'rawnaq travel',
+                    'silverjet', 'silverjet vakanties',
+                    'trailfinders', 'travel counsellors',
+                    'east europe travel', 'tui deutschland', 'tui suisse',
+                    'voyage prive', 'voyage privé',
+                    # Additional exclusions
+                    'traveltino',
+                    'expedia',
+                }
+                # Extract deposit value at x0≈741-760
+                deposit_w = next((w for w in row if 735 <= w['x0'] <= 780), None)
+                deposit_val = 0.0
+                if deposit_w:
+                    try:
+                        deposit_val = float(re.sub(r'[^\d.]', '', deposit_w['text']))
+                    except Exception:
+                        deposit_val = 0.0
+
+                # Check if TA is on credit list — used later after src_code is extracted
+                _ta_lower = ta_name.lower().strip()
+                _on_credit = any(ct_name in _ta_lower or _ta_lower in ct_name
+                                 for ct_name in _CREDIT_TAS)
                 # A booking is "sharer missing" if NO adl=0 row exists for
                 # this room number anywhere in the entire PDF (all_bookings)
                 _room_has_sharer = any(
@@ -1110,6 +1147,17 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 if _is_lqa_rate and _is_direct and _not_wholesale and _is_lqa_stay:
                     bflags.append('Potential LQA')
 
+                # ── Payment Not Received ──────────────────────────────────
+                # deposit=0.00 + not on credit list + not direct booking
+                _is_direct_booking = bool(re.match(r'Direct|Complimentary', ta_name, re.I)
+                                          or src_code in ('DIU', 'CMP'))
+                # Comp = source code CMP, or standalone COMP (not "comp upgrade" from SPO)
+                _is_comp = bool(src_code == 'CMP'
+                                or re.search(r'(?<![A-Z/])\bCOMP\b(?!/)', ct, re.I)
+                                or any(f.lower() == 'comp' for f in bflags))
+                if deposit_val == 0.0 and not _on_credit and not _is_direct_booking and not _is_comp:
+                    bflags.append('Payment Not Received')
+
                 note = ' // '.join(note_lines[:8]) if note_lines else ''
 
                 summary_guests.append({
@@ -1129,6 +1177,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     'nights':     nights,
                     'adults':     adults_count,
                     'children':   child_count,
+                    'deposit':    deposit_val,
                 })
 
     # ══ PASS 4.5: orange annotation for bookings with no flight info ═════
@@ -1666,6 +1715,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             if 'sharer missing' in fl: cats.append('sharermissing')
             if 'poa:' in fl or fl == 'poa amount': cats.append('poa')
             if 'potential lqa' in fl: cats.append('lqa')
+            if 'payment not received' in fl: cats.append('paymissing')
         if g['flight'] and 'NO ETA' in g['flight']: cats.append('noeta')
         if g['flight'] and g['flight'] not in ('', '--', '-', 'NO FLIGHT INFO'): cats.append('flight')
         if g['flight'] == 'NO FLIGHT INFO': cats.append('noflight')
@@ -1688,6 +1738,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
             'nights':     g.get('nights', 0),
             'adults':     g.get('adults', 0),
             'children':   g.get('children', 0),
+            'deposit':    g.get('deposit', 0.0),
         })
 
     # ── Stat cards ────────────────────────────────────────────────────────
@@ -1721,6 +1772,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
                 if 'sharer missing' in fl: cats_g.append('sharermissing')
                 if 'poa:' in fl or fl == 'poa amount': cats_g.append('poa')
                 if 'potential lqa' in fl: cats_g.append('lqa')
+                if 'payment not received' in fl: cats_g.append('paymissing')
             if g.get('flight') and g['flight'] not in ('','--','-','NO FLIGHT INFO'): cats_g.append('flight')
             if g.get('flight') and 'NO ETA' in g.get('flight',''): cats_g.append('noeta')
             if g.get('flight') == 'NO FLIGHT INFO': cats_g.append('noflight')
@@ -1754,6 +1806,7 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         ('sharermissing','⚠️','Sharer?',   len([g for g in guests if any('Sharer Missing' in f for f in g['flags'])]), 'sharermissing'),
         ('poa',        '💵', 'POA Amt',    len([g for g in guests if any('POA' in f for f in g['flags'])]), 'poa'),
         ('lqa',        '🔍', 'Pot. LQA',   len([g for g in guests if any('Potential LQA' in f for f in g['flags'])]), 'lqa'),
+        ('paymissing', '🚨', 'Pay Missing', len([g for g in guests if any('Payment Not Received' in f for f in g['flags'])]), 'paymissing'),
     ]
     stat_cards = ''
     for sid, icon, label, val, cat in stat_items:
@@ -1811,6 +1864,21 @@ def build_summary_html(summary_data, pdf_filename='highlighted.pdf'):
         report_html += '</div>'
 
     guests_js = json.dumps(guests_json)
+
+    # ── Payment missing summary data ─────────────────────────────────────
+    pay_missing = [g for g in guests if any('Payment Not Received' in f for f in g['flags'])]
+    pay_missing_js = json.dumps([{
+        'room':      g['room'],
+        'name':      g['name'],
+        'conf':      g['conf'],
+        'ta':        g.get('ta',''),
+        'checkin':   g.get('checkin',''),
+        'checkout':  g.get('checkout',''),
+        'nights':    g.get('nights',0),
+        'rate_code': g.get('rate_code',''),
+        'deposit':   g.get('deposit',0.0),
+        'anchor':    f"booking-{g['conf']}-{g['room']}",
+    } for g in pay_missing])
 
     html = f'''<!DOCTYPE html>
 <html lang="en">
@@ -1937,6 +2005,7 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 <div class="nav-tabs">
   <div class="nav-tab active" id="tab-summary" onclick="showSection('summary')">📋 Summary</div>
   <div class="nav-tab" id="tab-report" onclick="showSection('report')">📄 Full Report</div>
+  <div class="nav-tab" id="tab-payment" onclick="showSection('payment')">🚨 Payment Missing <span id="pay-count-badge" style="background:#E24B4A;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;margin-left:4px">{len(pay_missing)}</span></div>
 </div>
 
 <div id="section-summary">
@@ -1962,12 +2031,44 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 {report_html}
 </div>
 
+<div id="section-payment" style="display:none;padding:20px 24px">
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden">
+    <div style="background:#1a1a2e;color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px">
+      <span style="font-size:18px">🚨</span>
+      <div>
+        <div style="font-weight:700;font-size:15px">Payment Not Received</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:2px">Bookings with zero deposit — not on credit account — follow up required</div>
+      </div>
+      <span id="pay-total-badge" style="margin-left:auto;background:#E24B4A;color:#fff;border-radius:20px;padding:4px 14px;font-size:12px;font-weight:700"></span>
+    </div>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+    <table style="width:100%;border-collapse:collapse;min-width:600px">
+      <thead>
+        <tr style="background:#f8fafc">
+          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Room</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Guest</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Conf No.</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Travel Agent</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Stay</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Rate Code</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Deposit</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;border-bottom:1px solid #e2e8f0">Action</th>
+        </tr>
+      </thead>
+      <tbody id="pay-tbody"></tbody>
+    </table>
+    <div id="pay-no-results" style="text-align:center;padding:40px;color:#94a3b8;font-size:14px;display:none">✅ No outstanding payments for this arrival</div>
+    </div>
+  </div>
+</div>
+
 <button class="float-back" id="float-back" onclick="showSection('summary')">
   &#8592; Back to Summary
 </button>
 
 <script>
 const GUESTS = {guests_js};
+const PAY_MISSING = {pay_missing_js};
 // Map anchor → hl_lines dict for flag-line flashing
 const HLMAP = {{}};
 GUESTS.forEach(g => {{ HLMAP[g.anchor] = g.hl_lines || {{}}; }});
@@ -1994,6 +2095,7 @@ const FLAG_COLORS = {{
   'Sharer Missing':'#FCEBEB:#501313',
   'POA':'#FAEEDA:#633806',
   'Potential LQA':'#FCEBEB:#501313',
+  'Payment Not Received':'#FCEBEB:#501313',
 }};
 
 function flagColor(f) {{
@@ -2024,20 +2126,62 @@ function goToBooking(anchor) {{
 function showSection(which) {{
   const sum = document.getElementById('section-summary');
   const rep = document.getElementById('section-report');
+  const pay = document.getElementById('section-payment');
   const btn = document.getElementById('float-back');
-  if (which === 'report') {{
-    sum.style.display = 'none';
-    rep.style.display = 'block';
-    btn.classList.add('visible');
-  }} else {{
-    sum.style.display = 'block';
-    rep.style.display = 'none';
-    btn.classList.remove('visible');
+  sum.style.display = which==='summary' ? 'block' : 'none';
+  rep.style.display = which==='report'  ? 'block' : 'none';
+  pay.style.display = which==='payment' ? 'block' : 'none';
+  btn.classList.toggle('visible', which==='report');
+  if (which !== 'report') {{
     document.querySelectorAll('.booking-flash').forEach(el => el.classList.remove('booking-flash'));
     clearHlFlash();
   }}
-  document.getElementById('tab-summary').classList.toggle('active', which==='summary');
-  document.getElementById('tab-report').classList.toggle('active', which==='report');
+  ['summary','report','payment'].forEach(s => {{
+    const tab = document.getElementById(`tab-${{s}}`);
+    if (tab) tab.classList.toggle('active', s===which);
+  }});
+  if (which === 'payment') renderPayment();
+}}
+
+function renderPayment() {{
+  const tbody = document.getElementById('pay-tbody');
+  const noRes = document.getElementById('pay-no-results');
+  const badge = document.getElementById('pay-total-badge');
+  tbody.innerHTML = '';
+  if (!PAY_MISSING || PAY_MISSING.length === 0) {{
+    noRes.style.display = 'block';
+    if (badge) badge.textContent = '0 bookings';
+    return;
+  }}
+  noRes.style.display = 'none';
+  if (badge) badge.textContent = PAY_MISSING.length + ' booking' + (PAY_MISSING.length!==1?'s':'') + ' outstanding';
+  PAY_MISSING.forEach((g, idx) => {{
+    const tr = document.createElement('tr');
+    tr.style.background = idx%2===0 ? '#fff' : '#fafbfd';
+    tr.innerHTML = `
+      <td style="padding:9px 12px;font-weight:700;font-size:14px;color:#1a1a2e;vertical-align:top">${{g.room}}</td>
+      <td style="padding:9px 12px;vertical-align:top">
+        <div style="font-weight:600;color:#1e2535">${{g.name}}</div>
+      </td>
+      <td style="padding:9px 12px;font-family:monospace;font-size:11px;color:#6b7280;vertical-align:top">${{g.conf}}</td>
+      <td style="padding:9px 12px;font-size:12px;color:#374151;vertical-align:top">${{g.ta || '—'}}</td>
+      <td style="padding:9px 12px;font-size:11px;color:#374151;vertical-align:top;white-space:nowrap">
+        ${{g.checkin}} → ${{g.checkout}}<br>
+        <span style="color:#6b7280">${{g.nights}}N</span>
+      </td>
+      <td style="padding:9px 12px;font-family:monospace;font-size:11px;color:#6b7280;vertical-align:top">${{g.rate_code}}</td>
+      <td style="padding:9px 12px;vertical-align:top">
+        <span style="background:#FCEBEB;color:#501313;font-size:11px;padding:2px 8px;border-radius:8px;font-weight:600">USD ${{g.deposit.toFixed(2)}}</span>
+      </td>
+      <td style="padding:9px 12px;vertical-align:top">
+        <button onclick="goToBooking('${{g.anchor}}',null,null)"
+          style="font-size:11px;background:#1a56db;color:#fff;border:none;border-radius:8px;
+                 padding:5px 12px;cursor:pointer;font-weight:600;white-space:nowrap">
+          📄 View in Report
+        </button>
+      </td>`;
+    tbody.appendChild(tr);
+  }});
 }}
 
 function saveNote(el) {{
@@ -2056,6 +2200,7 @@ function downloadPDF() {{
   style.textContent = `
     @media print {{
       #section-report {{ display: none !important; }}
+      #section-payment {{ display: none !important; }}
       #section-summary {{ display: block !important; zoom: 100% !important; }}
       .table-wrap {{ padding: 0; }}
       table {{ font-size: 10px; }}
@@ -2192,6 +2337,7 @@ function render(filterCat) {{
       else if (/sharer missing/.test(fl)) cat='sharermissing';
       else if (/^poa/.test(fl)) cat='poa';
       else if (/potential lqa/.test(fl)) cat='lqa';
+      else if (/payment not received/.test(fl)) cat='paymissing';
       else if (/ek|ey|qr|g9|ku|gf|sq|ai|6e/.test(fl)) cat='flight';
       return `<span class="flag" style="${{flagColor(f)}}" title="Jump to related lines in report"
         onclick="goToBooking('${{g.anchor}}','${{cat}}',HLMAP['${{g.anchor}}'])">${{f}}</span>`;
@@ -2244,6 +2390,7 @@ function render(filterCat) {{
 }}
 
 function filterGuests(cat) {{
+  if (cat === 'paymissing') {{ showSection('payment'); return; }}
   if (currentFilter === cat) cat = 'all';
   rowFlashIntervals.forEach(id => clearInterval(id));
   rowFlashIntervals = [];
@@ -2265,7 +2412,8 @@ function filterGuests(cat) {{
     'activity':'Activities',
     'sharermissing':'Sharer Name Missing',
     'poa':'POA with Amount',
-    'lqa':'Potential LQA Auditor'
+    'lqa':'Potential LQA Auditor',
+    'paymissing':'Payment Not Received'
   }};
   document.getElementById('filter-tag').textContent = labels[cat] || cat;
   render(cat);
@@ -2278,6 +2426,236 @@ render('all');
     return html
 
 
+
+
+
+def build_briefing_html(summary_data, pdf_filename='highlighted.pdf'):
+    """Priority Briefing Sheet — only guests needing attention, VIP-first ordering."""
+    import json, html as htmllib
+
+    guests  = summary_data['guests']
+    prop    = summary_data.get('property', '')
+    dt      = summary_data.get('date', '')
+
+    # ── Priority tiers ────────────────────────────────────────────────────
+    TIER1_FLAGS = {
+        'VIP','VIP2','VIPG','VIPR','Platinum','Titanium','Gold','Silver','Red',
+        'Potential VIP','Potential LQA',
+    }
+    TIER2_FLAGS = {
+        'Complaint','Allergy','Allergic','Collect','No Flight Info',
+        'Sharer Missing','POA',
+    }
+    TIER3_FLAGS = {
+        'Honeymoon','Wedding','Birthday','Anniversary','Babymoon',
+        'Proposal','Engagement','Birthday Cake','Birthday Amenity',
+        'Birthday Decoration','Honeymoon Setup','Honeymoon Amenity',
+        'Restaurant Booking','Spa Booking','Activities','Upgrade','Comp',
+        'Children',
+    }
+    WORTH_NOTING = {
+        'RPT','Repeat','Early Check-in','Together','Multi-leg',
+    }
+
+    def get_tier(flags):
+        fl_lower = [f.lower() for f in flags]
+        for f in flags:
+            if any(f.startswith(t) or f == t for t in TIER1_FLAGS): return 1
+            if any(t.lower() in f.lower() for t in {'Potential VIP','Potential LQA',
+               'VIP2','VIPG','VIPR','Platinum','Titanium','Gold'}): return 1
+        for f in flags:
+            if any(t.lower() in f.lower() for t in TIER2_FLAGS): return 2
+        for f in flags:
+            if any(t.lower() in f.lower() for t in TIER3_FLAGS): return 3
+        for f in flags:
+            if any(t.lower() in f.lower() for t in WORTH_NOTING): return 4
+        return 99  # exclude
+
+    def flag_badge(f):
+        fl = f.lower()
+        if any(x in fl for x in ['platinum','titanium','gold','silver','red','vip2','vipg','vipr']):
+            bg,fg = '#EEEDFE','#26215C'
+        elif 'potential vip' in fl or 'potential lqa' in fl:
+            bg,fg = '#FCEBEB','#501313'
+        elif any(x in fl for x in ['allerg','shellfish','gluten','peanut','lactose','vegan','halal']):
+            bg,fg = '#FCEBEB','#501313'
+        elif any(x in fl for x in ['complaint','glitch']):
+            bg,fg = '#FCEBEB','#501313'
+        elif any(x in fl for x in ['collect','payment','poa']):
+            bg,fg = '#FAEEDA','#633806'
+        elif any(x in fl for x in ['honeymoon','wedding','birthday','anniversary',
+                                    'babymoon','proposal','engagement']):
+            bg,fg = '#EEEDFE','#26215C'
+        elif 'no flight' in fl or 'sharer missing' in fl:
+            bg,fg = '#FCEBEB','#501313'
+        elif any(x in fl for x in ['restaurant','spa booking']):
+            bg,fg = '#E1F5EE','#04342C'
+        elif 'activit' in fl:
+            bg,fg = '#E6F1FB','#042C53'
+        elif any(x in fl for x in ['rpt','repeat','stays']):
+            bg,fg = '#E1F5EE','#04342C'
+        elif any(x in fl for x in ['early check-in','upgrade','comp','together','multi-leg']):
+            bg,fg = '#FAEEDA','#633806'
+        elif any(x in fl for x in ['long stay','child']):
+            bg,fg = '#E1F5EE','#04342C'
+        else:
+            bg,fg = '#F1EFE8','#2C2C2A'
+        label = htmllib.escape(f)
+        return f'<span style="display:inline-block;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:{bg};color:{fg};margin:2px 2px 2px 0">{label}</span>'
+
+    # ── Filter and sort guests ────────────────────────────────────────────
+    briefing = []
+    for g in guests:
+        tier = get_tier(g['flags'])
+        if tier <= 4:
+            briefing.append((tier, g))
+
+    briefing.sort(key=lambda x: x[1]['room'].zfill(4))
+
+    total_rooms  = summary_data['rooms']
+    briefing_cnt = len(briefing)
+
+    # ── Tier labels ───────────────────────────────────────────────────────
+    TIER_META = {
+        1: ('🔴', 'VIP & High Profile',   '#FCEBEB', '#501313'),
+        2: ('🟠', 'Needs Action',          '#FEF3CD', '#7B4F00'),
+        3: ('🟡', 'Needs Preparation',     '#FEFCE8', '#6B5F00'),
+        4: ('🔵', 'Worth Noting',          '#EFF6FF', '#1E3A5F'),
+    }
+
+    # Build rows grouped by tier
+    rows_html = ''
+    for tier, g in briefing:
+        icon, label, bg, fg = TIER_META[tier]
+
+        name    = htmllib.escape(g['name'])
+        ta      = htmllib.escape(g.get('ta',''))
+        flight  = g.get('flight','')
+        checkin = g.get('checkin','')
+        checkout= g.get('checkout','')
+        nights  = g.get('nights',0)
+        adults  = g.get('adults',0)
+        children= g.get('children',0)
+        room_type = g.get('room_type','')
+        rate_code = g.get('rate_code','')
+
+        # Flight badge
+        if flight == 'NO FLIGHT INFO':
+            fl_badge = '<span style="background:#FCEBEB;color:#501313;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600">❓ No Flight</span>'
+        elif flight and 'NO ETA' in flight:
+            fl_badge = f'<span style="background:#FAEEDA;color:#633806;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600">✈️ {htmllib.escape(flight)}</span>'
+        elif flight:
+            fl_badge = f'<span style="background:#E1F5EE;color:#04342C;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600">✈️ {htmllib.escape(flight)}</span>'
+        else:
+            fl_badge = '<span style="color:#94a3b8;font-size:10px">—</span>'
+
+        flags_html = ''.join(flag_badge(f) for f in g['flags'])
+
+        pax = f'👤 {adults}'
+        if children: pax += f' · 🧒 {children}'
+
+        rows_html += f'''
+        <tr class="guest-row">
+          <td style="font-weight:700;font-size:15px;color:#1a1a2e;white-space:nowrap">
+            <span style="font-size:9px;margin-right:3px">{icon}</span>{g["room"]}
+            <div style="font-size:9px;color:#94a3b8;font-family:monospace;font-weight:400">{room_type}</div>
+            <div style="font-size:9px;color:#b0b8c4;font-family:monospace;font-weight:400">{rate_code}</div>
+          </td>
+          <td>
+            <div style="font-weight:600;color:#1e2535;font-size:13px">{name}</div>
+            {f'<div style="font-size:10px;color:#6b7280;font-style:italic">{ta}</div>' if ta else ''}
+          </td>
+          <td style="white-space:nowrap">
+            <div style="font-size:11px;color:#1e2535;font-weight:500">{checkin} → {checkout}</div>
+            <div style="font-size:10px;color:#6b7280">{f"{nights}N" if nights else ""} &nbsp; {pax}</div>
+          </td>
+          <td>{fl_badge}</td>
+          <td><div style="display:flex;flex-wrap:wrap;gap:2px">{flags_html}</div></td>
+          <td style="font-size:10px;color:#374151;max-width:180px">{htmllib.escape(g.get("note",""))}</td>
+        </tr>'''
+
+    if not briefing:
+        rows_html = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#94a3b8">No priority guests for this arrival</td></tr>'
+
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Morning Briefing — {dt}</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f5f9;color:#1e2535;font-size:13px}}
+.header{{background:#1a1a2e;color:#fff;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}}
+.header h1{{font-size:17px;font-weight:700}}
+.header-sub{{font-size:11px;color:#94a3b8;margin-top:2px}}
+.property{{font-size:17px;font-weight:700;color:#fff;text-align:right}}
+.meta-bar{{background:#fff;border-bottom:1px solid #e2e8f0;padding:10px 24px;
+           display:flex;align-items:center;gap:20px;font-size:12px;color:#6b7280;flex-wrap:wrap}}
+.meta-bar strong{{color:#1e2535}}
+.badge{{background:#1a56db;color:#fff;border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600}}
+.tier-legend{{margin-left:auto;font-size:11px;display:flex;gap:12px;flex-wrap:wrap}}
+.wrap{{padding:16px 24px}}
+table{{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}}
+th{{background:#f8fafc;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;padding:9px 11px;text-align:left;border-bottom:1px solid #e2e8f0}}
+td{{padding:9px 11px;border-bottom:1.5px solid #f1f5f9;vertical-align:top}}
+.guest-row:nth-child(even){{background:#fafbfd}}
+.guest-row:hover{{background:#f0f7ff!important}}
+.tier-header td{{font-size:10px;font-weight:700;padding:5px 12px;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid #e2e8f0}}
+.footer{{text-align:center;padding:16px;font-size:10px;color:#94a3b8}}
+@media print{{
+  .header,.meta-bar{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  .wrap{{padding:4px}}
+  .guest-row{{page-break-inside:avoid}}
+}}
+@media (max-width:768px){{
+  .header{{flex-wrap:wrap;gap:4px;padding:10px 14px}}
+  .property{{width:100%;text-align:left;font-size:13px}}
+  .meta-bar{{padding:8px 12px}}
+  .tier-legend{{margin-left:0;width:100%}}
+  .wrap{{padding:8px 0;overflow-x:auto}}
+  table{{min-width:620px}}
+}}
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>📋 Morning Briefing</h1>
+    <div class="header-sub">{dt} &nbsp;·&nbsp; Priority Arrivals Only</div>
+  </div>
+  <div class="property">{prop}</div>
+</div>
+<div class="meta-bar">
+  <div>Total Arrivals: <strong>{total_rooms}</strong></div>
+  <div>In Briefing: <strong>{briefing_cnt}</strong> &nbsp;<span class="badge">{briefing_cnt} of {total_rooms}</span></div>
+  <div class="tier-legend">
+    <span>🔴 VIP &amp; High Profile</span>
+    <span>🟠 Needs Action</span>
+    <span>🟡 Needs Preparation</span>
+    <span>🔵 Worth Noting</span>
+  </div>
+</div>
+<div class="wrap">
+<table>
+  <thead>
+    <tr>
+      <th style="width:75px">Room</th>
+      <th style="width:170px">Guest</th>
+      <th style="width:130px">Stay / Pax</th>
+      <th style="width:110px">Flight</th>
+      <th>Flags</th>
+      <th style="width:180px">Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    {rows_html}
+  </tbody>
+</table>
+</div>
+<div class="footer">Morning Briefing &nbsp;·&nbsp; {dt} &nbsp;·&nbsp; {prop}</div>
+</body>
+</html>'''
 
 
 # ── UI ───────────────────────────────────────────────────────────────────
@@ -2335,7 +2713,7 @@ with col_right:
                     base      = fname.replace('.pdf','').replace('.PDF','')
                     out_name  = f"{base}_{today}_highlighted.pdf"
                     html_name = f"{base}_{today}_summary.html"
-                    summary_html = build_summary_html(summary_data, pdf_filename=out_name)
+                    summary_html  = build_summary_html(summary_data, pdf_filename=out_name)
                     st.session_state['results'].append({
                         'name': out_name, 'html_name': html_name,
                         'original': fname,
