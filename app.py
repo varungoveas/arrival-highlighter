@@ -1046,6 +1046,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     # Additional exclusions
                     'traveltino',
                     'expedia',
+                    'kognitiv',
                 }
                 # Extract deposit value at x0≈741-760
                 deposit_w = next((w for w in row if 735 <= w['x0'] <= 780), None)
@@ -1092,13 +1093,58 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 for k in sorted(note_lg.keys()):
                     ws = sorted(note_lg[k], key=lambda x: x['x0'])
                     line_text = ' '.join(w['text'] for w in ws).strip()
-                    # Skip package codes, short lines, date-only lines, label-only lines
-                    if len(line_text) < 10: continue
-                    if re.match(r'^[\d/\s,]+$', line_text): continue
-                    if re.match(r'^[A-Z0-9]{4,}[,E]', line_text): continue  # BFB01E,BFB03E etc
-                    if re.match(r'^[\-\d\*]+[A-Z]{3}', line_text): continue  # -1*BFB40E etc
-                    if re.match(r'^[A-Z0-9,]+$', line_text): continue  # all caps/numbers only
-                    if re.match(r'^(Reservation Notes|Reservation Comment|Total stays|Total nights|PreRegistered|Specials|Preferences|Membership Type|Promotions|Profile Notes|Central Comments|Routing Instruction|Fixed Charges)[\s:]', line_text, re.I): continue
+
+                    # ── Hard skip: BFB/NFB/BTR package codes ────────────
+                    if re.match(r'^[\-\d\*]*[A-Z]{2,4}\d{2}[A-Z]', line_text): continue   # BFB01E, NFB02I
+                    if re.match(r'^[\-\d\*]+[A-Z]{3}', line_text): continue                # -1*BFB40E
+                    if re.match(r'^[A-Z]{2,4}\d{2,}[A-Z],[A-Z]', line_text): continue     # BFB40E,NFB
+                    if re.match(r'^,[A-Z]{2,4}\d{2}', line_text): continue                 # ,BFB14E,BFB40 (fragment)
+                    if re.match(r'^[A-Z],[A-Z]{2,4}\d{2}', line_text): continue            # E,BFB40E (fragment)
+                    if re.match(r'^[A-Z]{1,2},', line_text) and re.search(r'[A-Z]{2,4}\d{2}[A-Z]', line_text): continue  # E,NTR28E
+                    if re.match(r'^[A-Z0-9,]+$', line_text) and len(line_text) < 30: continue  # all caps/nums (short)
+                    # ── Hard skip: digit/date-only lines ────────────────
+                    if re.match(r'^[\d/\s,\.]+$', line_text): continue
+                    # ── Hard skip: sharer booking rows (room# + name starting with *) ─
+                    if re.match(r'^\d{1,4}\s+\*', line_text): continue
+                    # ── Hard skip: conf sub-rows (6+ digit number followed by space) ──
+                    if re.match(r'^\d{6,}\s', line_text): continue
+                    # ── Hard skip: raw rate/booking rows spilling over ───
+                    if re.match(r'^\d[A-Z]\d[A-Z]{2}\s+\d', line_text): continue          # 1V5XK 0 0 0...
+                    if re.search(r'\bDUO\b|\bOTA\b|\bDIU\b|\bEML\b', line_text) and re.search(r'\d{2}/\d{2}/\d{2}', line_text): continue
+                    # ── Hard skip: fixed charges detail lines ────────────
+                    if re.match(r'^\d{5}\s+(?:Guest|Adj)', line_text): continue            # 62500 Guest Transfer...
+                    if re.match(r'^Guest\s+Transfer\s+\d', line_text): continue
+                    # ── Hard skip: contract/board/commission noise ───────
+                    if re.match(r'^(Contract\s+(Name|Description)|Board\s+description|'
+                                 r'TA\s+(Commission|commission)|TA\s+commission|'
+                                 r'Source\s+Channel|CONTRACTED\s+RATES|'
+                                 r'Total\s+stays|Total\s+nights|PreRegistered|'
+                                 r'Specials\s*:|Preferences\s*:|Membership\s+Type\s*:|'
+                                 r'Promotions\s*:|Routing\s+Instruction|Fixed\s+Charges)',
+                                 line_text, re.I): continue
+                    # ── Hard skip: pure label lines with no content ──────
+                    if re.match(r'^(Reservation\s+Notes|Reservation\s+Comment)\s*$',
+                                 line_text, re.I): continue
+                    # ── Hard skip: very short noise ──────────────────────
+                    if len(line_text) <= 4: continue
+
+                    # ── Extract content from label+content lines ─────────
+                    # "Reservation Comment Dharsni - Allergic..." → keep content after label
+                    m_label = re.match(
+                        r'^(Reservation\s+(?:Notes|Comment)|Profile\s+Notes|'
+                        r'Central\s+Comments|Reservation\s+Notes\s*:)\s*:?\s*(.+)$',
+                        line_text, re.I)
+                    if m_label:
+                        content = m_label.group(2).strip()
+                        # Skip if content is just another label
+                        if re.match(r'^(Reservation\s+Comment|Total\s+stays|'
+                                     r'Specials|Preferences)[\s:]', content, re.I):
+                            continue
+                        if len(content) >= 10:
+                            note_lines.append(content)
+                        continue
+
+                    # ── Include: all remaining lines with real content ────
                     note_lines.append(line_text)
                 # Check-in / Check-out dates and room type from room row
                 checkin_w  = next((w for w in row if 288 <= w['x0'] <= 310
@@ -1158,7 +1204,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 if deposit_val == 0.0 and not _on_credit and not _is_direct_booking and not _is_comp:
                     bflags.append('Payment Not Received')
 
-                note = ' // '.join(note_lines[:8]) if note_lines else ''
+                note = ' // '.join(note_lines[:15]) if note_lines else ''
 
                 summary_guests.append({
                     'room':       rw['text'],
