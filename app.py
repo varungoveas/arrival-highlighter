@@ -2064,6 +2064,11 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
     <span class="filter-label">Showing:</span>
     <span class="filter-tag" id="filter-tag">All Bookings</span>
     <span class="count-badge" id="count-badge">{len(guests)} guests</span>
+    <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6b7280;cursor:pointer;margin-left:8px;user-select:none" title="Silver is GHA base level — uncheck to hide from GHA filter">
+      <input type="checkbox" id="silver-toggle" checked onchange="updateGHACount();render(currentFilter)"
+             style="accent-color:#1a56db;width:13px;height:13px;cursor:pointer">
+      Include GHA Silver
+    </label>
     <button class="dl-pdf-btn" onclick="downloadPDF()" title="Download summary as PDF">⬇️ Download PDF</button>
   </div>
   <div class="table-wrap">
@@ -2427,7 +2432,14 @@ function render(filterCat) {{
   rowFlashIntervals = [];
   let shown = 0;
   GUESTS.forEach(g => {{
-    const match = filterCat === 'all' || g.cats.includes(filterCat);
+    const silverToggle = document.getElementById('silver-toggle');
+    const includeSilver = silverToggle ? silverToggle.checked : true;
+    // Silver-only = has Silver flag but no higher GHA tier (Gold/Platinum/Titanium/Red)
+    const isSilverOnly = g.flags.some(f => /\bsilver\b/i.test(f))
+                      && !g.flags.some(f => /\b(platinum|titanium|gold|red)\b/i.test(f));
+    // Completely skip Silver-only guests when unchecked and GHA filter is active
+    if (!includeSilver && isSilverOnly && filterCat === 'membership') return;
+    const match = (filterCat === 'all' || g.cats.includes(filterCat));
     const tr = document.createElement('tr');
     tr.dataset.cats = g.cats.join(' ');
     if (!match) tr.classList.add('dimmed');
@@ -2568,7 +2580,25 @@ function filterGuests(cat) {{
     'paymissing':'Payment Not Received'
   }};
   document.getElementById('filter-tag').textContent = labels[cat] || cat;
+  updateGHACount();
   render(cat);
+}}
+
+function updateGHACount() {{
+  const silverToggle = document.getElementById('silver-toggle');
+  const includeSilver = silverToggle ? silverToggle.checked : true;
+  const ghaCard = document.querySelector('[data-cat="membership"] .stat-num');
+  if (!ghaCard) return;
+  const count = GUESTS.filter(g => {{
+    if (!g.cats.includes('membership')) return false;
+    if (!includeSilver) {{
+      const isSilverOnly = g.flags.some(f => /\bsilver\b/i.test(f))
+                        && !g.flags.some(f => /\b(platinum|titanium|gold|red)\b/i.test(f));
+      if (isSilverOnly) return false;
+    }}
+    return true;
+  }}).length;
+  ghaCard.textContent = count;
 }}
 
 render('all');
