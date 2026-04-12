@@ -1983,7 +1983,11 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 .flag{{display:inline-block;font-size:10.5px;padding:2px 9px;border-radius:12px;font-weight:500;cursor:pointer;transition:opacity .15s}}
 .flag:hover{{opacity:.75}}
 /* ── Notes ── */
-.note-original-text{{font-size:11.5px;color:#374151;line-height:1.55;white-space:pre-wrap;word-break:break-word;padding:3px 0 4px 0;min-height:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}}
+.note-original-text{{font-size:11.5px;color:#374151;line-height:1.55;white-space:pre-wrap;word-break:break-word;padding:3px 0 4px 0;min-height:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:text;user-select:text}}
+.note-hl{{background:#FFF176;border-radius:2px;padding:0 1px}}
+.note-hl-toolbar{{position:absolute;z-index:500;background:#1a1a2e;border-radius:8px;padding:4px 8px;display:flex;gap:6px;align-items:center;box-shadow:0 4px 14px rgba(0,0,0,.35);white-space:nowrap}}
+.note-hl-toolbar button{{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 5px;border-radius:4px;color:#fff;transition:background .12s}}
+.note-hl-toolbar button:hover{{background:rgba(255,255,255,.15)}}
 .note-manual-field{{font-size:12px;font-family:Georgia,serif;font-style:italic;color:#b91c1c;width:100%;min-height:26px;padding:3px 6px;border:1px dashed #fca5a5;border-radius:4px;background:#fff5f5;resize:vertical;outline:none;line-height:1.5;transition:border .15s;margin-top:3px;display:block}}
 .note-manual-field:focus{{border-color:#ef4444;background:#fff}}
 .note-manual-field::placeholder{{color:#fca5a5;font-style:italic;font-family:Georgia,serif}}
@@ -2238,6 +2242,104 @@ function saveNote(el) {{
   }}
 }}
 
+// ── Text highlight in notes ───────────────────────────────────────────
+const _hlToolbar = document.createElement('div');
+_hlToolbar.className = 'note-hl-toolbar';
+_hlToolbar.style.display = 'none';
+_hlToolbar.innerHTML = `
+  <button onclick="_applyNoteHl()" title="Highlight yellow">🟡 Highlight</button>
+  <button onclick="_removeNoteHl()" title="Remove highlight">✕</button>`;
+document.body.appendChild(_hlToolbar);
+
+let _hlActiveEl = null;
+
+document.addEventListener('mouseup', function(e) {{
+  // Ignore clicks inside toolbar itself
+  if (_hlToolbar.contains(e.target)) return;
+  const noteEl = e.target.closest('.note-original-text');
+  if (!noteEl) {{ _hlToolbar.style.display = 'none'; return; }}
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.toString().trim()) {{
+    _hlToolbar.style.display = 'none'; return;
+  }}
+  _hlActiveEl = noteEl;
+  // Position toolbar near selection
+  const rect = sel.getRangeAt(0).getBoundingClientRect();
+  const scrollY = window.scrollY || document.documentElement.scrollTop;
+  _hlToolbar.style.display = 'flex';
+  _hlToolbar.style.left = Math.max(4, rect.left + rect.width/2 - 70) + 'px';
+  _hlToolbar.style.top  = (rect.top + scrollY - 42) + 'px';
+  _hlToolbar.style.position = 'absolute';
+}});
+
+function _applyNoteHl() {{
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !_hlActiveEl) {{ _hlToolbar.style.display='none'; return; }}
+  const range = sel.getRangeAt(0);
+  // Only operate within the note element
+  if (!_hlActiveEl.contains(range.commonAncestorContainer)) {{ _hlToolbar.style.display='none'; return; }}
+  const span = document.createElement('span');
+  span.className = 'note-hl';
+  try {{
+    range.surroundContents(span);
+  }} catch(e) {{
+    // Selection crosses element boundaries — extract and wrap
+    const frag = range.extractContents();
+    span.appendChild(frag);
+    range.insertNode(span);
+  }}
+  sel.removeAllRanges();
+  _hlToolbar.style.display = 'none';
+  _saveNoteHls(_hlActiveEl);
+}}
+
+function _removeNoteHl() {{
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) {{ _hlToolbar.style.display='none'; return; }}
+  const range = sel.getRangeAt(0);
+  // Unwrap any note-hl spans within the selection
+  const container = range.commonAncestorContainer.nodeType === 3
+    ? range.commonAncestorContainer.parentElement
+    : range.commonAncestorContainer;
+  const hlSpans = container.querySelectorAll ? container.querySelectorAll('.note-hl') : [];
+  hlSpans.forEach(sp => {{
+    if (sel.containsNode(sp, true)) {{
+      const parent = sp.parentNode;
+      while (sp.firstChild) parent.insertBefore(sp.firstChild, sp);
+      parent.removeChild(sp);
+    }}
+  }});
+  // Also check if we're inside a hl span
+  let el = range.commonAncestorContainer;
+  while (el && el !== document.body) {{
+    if (el.classList && el.classList.contains('note-hl')) {{
+      const parent = el.parentNode;
+      while (el.firstChild) parent.insertBefore(el.firstChild, el);
+      parent.removeChild(el);
+      break;
+    }}
+    el = el.parentNode;
+  }}
+  sel.removeAllRanges();
+  _hlToolbar.style.display = 'none';
+  if (_hlActiveEl) _saveNoteHls(_hlActiveEl);
+}}
+
+function _saveNoteHls(noteEl) {{
+  // Save highlights as the innerHTML so they persist in localStorage
+  const row = noteEl.closest('tr');
+  if (!row) return;
+  const textarea = row.querySelector('.note-manual-field');
+  if (!textarea) return;
+  const key = 'notehl-' + textarea.dataset.key;
+  localStorage.setItem(key, noteEl.innerHTML);
+}}
+
+function _loadNoteHls(noteEl, key) {{
+  const saved = localStorage.getItem('notehl-' + key);
+  if (saved) noteEl.innerHTML = saved;
+}}
+
 function styleNote(el, original) {{}} // no longer needed
 
 function downloadPDF() {{
@@ -2411,6 +2513,10 @@ function render(filterCat) {{
     if (noteEl) {{
       const saved = localStorage.getItem(noteEl.dataset.key);
       if (saved) noteEl.value = saved;
+    }}
+    const noteTextEl = tr.querySelector('.note-original-text');
+    if (noteTextEl) {{
+      _loadNoteHls(noteTextEl, `note-${{g.room}}-${{g.conf}}`);
     }}
 
     if (match) {{
