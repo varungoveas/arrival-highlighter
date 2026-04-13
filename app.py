@@ -1047,6 +1047,12 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     'traveltino',
                     'expedia',
                     'kognitiv',
+                    'tbo holidays',
+                    'tbo',
+                    'agoda',
+                    'agoda services',
+                    'dertour',
+                    'der tour',
                 }
                 # Extract deposit value at x0≈741-760
                 deposit_w = next((w for w in row if 735 <= w['x0'] <= 780), None)
