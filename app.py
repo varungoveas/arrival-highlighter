@@ -1513,6 +1513,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 line['hl_id'] = f"anchor-{line['anchor_id']}"
 
     # ── PASS 6: render each PDF page as image with highlights ────────────
+    _page_img_error = None
     try:
         from PIL import Image as _PILImage, ImageDraw as _PILDraw
         import base64 as _b64mod
@@ -1571,7 +1572,10 @@ def highlight_pdf(pdf_bytes, enabled_cats):
 
         summary_data['page_images'] = page_images
     except Exception as e:
+        import traceback
+        _page_img_error = traceback.format_exc()
         summary_data['page_images'] = []
+        summary_data['page_img_error'] = str(e)
 
     # Keep full_report for backward compat (empty)
     full_report = []
@@ -2580,11 +2584,11 @@ function goToBooking(anchor, flagCat, hlLines) {{
   clearHlFlash();
   requestAnimationFrame(() => {{
     setTimeout(() => {{
-      // Force layout recalculation
-      document.getElementById('section-report').offsetHeight;
       const el = document.getElementById(anchor);
       if (!el) return;
-      el.scrollIntoView({{behavior:'instant', block:'start'}});
+      const rect = el.getBoundingClientRect();
+      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      window.scrollTo({{top: scrollTop + rect.top - 100, behavior: 'instant'}});
       el.classList.remove('booking-flash');
       void el.offsetWidth;
       el.classList.add('booking-flash');
@@ -2599,7 +2603,11 @@ function goToBooking(anchor, flagCat, hlLines) {{
           const catIds = (flagCat && hl[flagCat]) ? hl[flagCat] : idsToFlash;
           const targetId = catIds.find(id => !id.startsWith('anchor-')) || catIds[0];
           const targetEl = document.querySelector(`[data-hlid="${{targetId}}"]`);
-          if (targetEl) targetEl.scrollIntoView({{behavior:'smooth', block:'center'}});
+          if (targetEl) {{
+            const r2 = targetEl.getBoundingClientRect();
+            const st2 = window.pageYOffset || document.documentElement.scrollTop;
+            window.scrollTo({{top: st2 + r2.top - 200, behavior: 'smooth'}});
+          }}
         }}, 300);
       }}
     }}, 250);
@@ -3278,6 +3286,10 @@ with col_right:
             st.markdown("### 📥 Reports Ready")
             for r in st.session_state['results']:
                 if r['success']:
+                    # Show page image error if it occurred
+                    pg_err = r.get('summary_data', {}).get('page_img_error')
+                    if pg_err:
+                        st.error(f"⚠️ Full Report images failed to generate: {pg_err}")
                     cat_summary = " · ".join(
                         f"{CATEGORIES[k]['icon']} {v}"
                         for k, v in r['counts'].items() if v > 0)
@@ -3312,15 +3324,14 @@ with col_right:
                             use_container_width=True,
                             key=f"xl_{r['name']}",
                             disabled=pay_count == 0)
-                    import base64 as _b64
-                    _b64_html = _b64.b64encode(r['html']).decode()
-                    st.markdown(
-                        f'<a href="data:text/html;base64,{_b64_html}" target="_blank" '
-                        f'style="display:inline-block;background:#1a1a2e;color:#fff;padding:10px 20px;'
-                        f'border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin:8px 0">'
-                        f'🔗 Open Interactive Summary in New Tab</a>',
-                        unsafe_allow_html=True
-                    )
-                    st.caption("💡 Click above to open the full interactive summary directly in your browser — flag clicking, report navigation and highlights all work there.")
+                    st.markdown("""
+                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
+                                padding:12px 16px;margin:8px 0;font-size:13px;color:#166534">
+                    <strong>💡 How to use the Interactive Summary:</strong><br>
+                    1. Click <strong>🌐 Download Interactive Summary</strong> above<br>
+                    2. Open the downloaded <code>.html</code> file from your <strong>Downloads folder</strong><br>
+                    3. Flags, report navigation and highlights all work in the opened file
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
                     st.error(f"❌ {r['original']}: {r.get('error','Unknown error')}")
