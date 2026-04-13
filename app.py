@@ -3202,10 +3202,72 @@ def build_payment_excel(summary_data):
     return buf.getvalue()
 
 
+def fetch_flight_eta(flight_code, arrival_date_str, api_key):
+    """
+    Look up scheduled arrival time at MLE for a flight on a given date.
+    arrival_date_str: 'DD/MM/YY' format (from the report)
+    Returns: 'HH:MM' string or None
+    """
+    import urllib.request, json as _json, re as _re
+    try:
+        # Parse date DD/MM/YY → YYYY-MM-DD
+        parts = arrival_date_str.strip().split('/')
+        if len(parts) != 3:
+            return None
+        dd, mm, yy = parts
+        yyyy = '20' + yy if len(yy) == 2 else yy
+        date_iso = f"{yyyy}-{mm.zfill(2)}-{dd.zfill(2)}"
+
+        # Clean flight code — remove spaces
+        fc = _re.sub(r'\s+', '', flight_code.upper())
+
+        url = f"https://aerodatabox.p.rapidapi.com/flights/number/{fc}/{date_iso}"
+        req = urllib.request.Request(url, headers={
+            "X-RapidAPI-Key":  api_key,
+            "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com"
+        })
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = _json.loads(resp.read())
+
+        flights = data if isinstance(data, list) else [data]
+        for f in flights:
+            arr = f.get('arrival', {})
+            # Check destination is MLE
+            iata = arr.get('airport', {}).get('iata', '')
+            if iata not in ('MLE', 'GAN', ''):
+                continue
+            # Get scheduled local time
+            sched = arr.get('scheduledTime', {})
+            local_t = sched.get('local', '')
+            if local_t:
+                # Format: '2026-04-14 10:15+05:00'
+                t_part = local_t.split(' ')[1][:5]  # → '10:15'
+                return t_part
+        return None
+    except Exception:
+        return None
+
+
 # ── UI ───────────────────────────────────────────────────────────────────
 st.markdown("## 🏝️ Arrival Report Highlighter")
 st.markdown("**Anantara Veli · Anantara Dhigu · Naladhu Private Island**")
 st.markdown("---")
+
+# ── Sidebar: API settings ─────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("### 🔑 API Settings")
+    aerodatabox_key = st.text_input(
+        "AeroDataBox API Key",
+        value=st.session_state.get('aerodatabox_key', ''),
+        type="password",
+        help="RapidAPI key for AeroDataBox — used to auto-fill missing ETAs",
+        placeholder="Paste your RapidAPI key here"
+    )
+    if aerodatabox_key:
+        st.session_state['aerodatabox_key'] = aerodatabox_key
+        st.success("✅ API key saved")
+    else:
+        st.caption("No key — missing ETAs will not be auto-filled")
 
 col_left, col_right = st.columns([1, 2])
 
@@ -3257,6 +3319,23 @@ with col_right:
                     base      = fname.replace('.pdf','').replace('.PDF','')
                     out_name  = f"{base}_{today}_highlighted.pdf"
                     html_name = f"{base}_{today}_summary.html"
+
+                    # ── Auto-fill missing ETAs via AeroDataBox ────────────
+                    _api_key = st.session_state.get('aerodatabox_key', '').strip()
+                    _eta_filled = 0
+                    if _api_key:
+                        for g in summary_data.get('guests', []):
+                            flight = g.get('flight', '')
+                            checkin = g.get('checkin', '')
+                            if flight and 'NO ETA' in flight and checkin:
+                                flight_code = flight.replace(' NO ETA', '').strip()
+                                eta = fetch_flight_eta(flight_code, checkin, _api_key)
+                                if eta:
+                                    g['flight'] = f"{flight_code} {eta}"
+                                    _eta_filled += 1
+                        if _eta_filled:
+                            status.markdown(f"✈️ Filled {_eta_filled} missing ETA(s)...")
+
                     summary_html  = build_summary_html(summary_data, pdf_filename=out_name)
                     excel_name    = f"{base}_{today}_payment_missing.xlsx"
                     excel_bytes   = build_payment_excel(summary_data)
