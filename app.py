@@ -3312,6 +3312,15 @@ with col_right:
                             use_container_width=True,
                             key=f"xl_{r['name']}",
                             disabled=pay_count == 0)
-                    st.info("⬆️ Download the Interactive Summary above and open it in your browser for full functionality — flag clicking, report navigation and highlights all work in the standalone file.", icon="💡")
+                    import base64 as _b64
+                    _b64_html = _b64.b64encode(r['html']).decode()
+                    st.markdown(
+                        f'<a href="data:text/html;base64,{_b64_html}" target="_blank" '
+                        f'style="display:inline-block;background:#1a1a2e;color:#fff;padding:10px 20px;'
+                        f'border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin:8px 0">'
+                        f'🔗 Open Interactive Summary in New Tab</a>',
+                        unsafe_allow_html=True
+                    )
+                    st.caption("💡 Click above to open the full interactive summary directly in your browser — flag clicking, report navigation and highlights all work there.")
                 else:
                     st.error(f"❌ {r['original']}: {r.get('error','Unknown error')}")
