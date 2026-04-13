@@ -2201,19 +2201,6 @@ function flagColor(f) {{
 let currentFilter = 'all';
 let rowFlashIntervals = [];
 
-function goToBooking(anchor) {{
-  showSection('report');
-  setTimeout(() => {{
-    const el = document.getElementById(anchor);
-    if (el) {{
-      el.scrollIntoView({{behavior:'smooth', block:'center'}});
-      el.classList.remove('booking-flash');
-      void el.offsetWidth;
-      el.classList.add('booking-flash');
-    }}
-  }}, 100);
-}}
-
 function showSection(which) {{
   const sum = document.getElementById('section-summary');
   const rep = document.getElementById('section-report');
