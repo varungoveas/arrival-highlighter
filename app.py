@@ -3312,7 +3312,6 @@ with col_right:
                             use_container_width=True,
                             key=f"xl_{r['name']}",
                             disabled=pay_count == 0)
-                    st.markdown("**Interactive Summary Preview:**")
-                    st.components.v1.html(r['html'].decode('utf-8'), height=600, scrolling=True)
+                    st.info("⬆️ Download the Interactive Summary above and open it in your browser for full functionality — flag clicking, report navigation and highlights all work in the standalone file.", icon="💡")
                 else:
                     st.error(f"❌ {r['original']}: {r.get('error','Unknown error')}")
