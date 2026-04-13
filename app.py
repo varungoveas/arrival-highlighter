@@ -2020,7 +2020,7 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 .no-results{{text-align:center;padding:48px;color:#94a3b8;font-size:14px}}
 
 /* ── Full report — PDF-style layout ── */
-#section-report{{visibility:hidden;position:absolute;left:-9999px;padding:20px 24px;background:#525659;overflow-x:auto;zoom:110%}}
+#section-report{{display:none;padding:20px 24px;background:#525659;overflow-x:auto;zoom:110%}}
 #section-summary{{zoom:100%}}
 .report-page{{position:relative;margin:0 auto 16px auto;box-shadow:0 4px 16px rgba(0,0,0,.4);display:block;overflow:hidden}}
 .booking-anchor{{scroll-margin-top:80px}}
@@ -2213,16 +2213,7 @@ function showSection(which) {{
   const pay = document.getElementById('section-payment');
   const btn = document.getElementById('float-back');
   sum.style.display = which==='summary' ? 'block' : 'none';
-  // Report uses visibility+position so images preload while hidden
-  if (which === 'report') {{
-    rep.style.visibility = 'visible';
-    rep.style.position   = 'relative';
-    rep.style.left       = '0';
-  }} else {{
-    rep.style.visibility = 'hidden';
-    rep.style.position   = 'absolute';
-    rep.style.left       = '-9999px';
-  }}
+  rep.style.display = which==='report'  ? 'block' : 'none';
   pay.style.display = which==='payment' ? 'block' : 'none';
   btn.classList.toggle('visible', which==='report');
   if (which !== 'report') {{
@@ -2586,36 +2577,35 @@ function flashHlLines(hlIds) {{
 function goToBooking(anchor, flagCat, hlLines) {{
   showSection('report');
   clearHlFlash();
-  // Wait for section to be visible and images to paint before scrolling
-  function tryScroll(attempts) {{
-    const el = document.getElementById(anchor);
-    if (!el && attempts > 0) {{
-      setTimeout(() => tryScroll(attempts - 1), 150);
-      return;
-    }}
-    if (!el) return;
-    el.scrollIntoView({{behavior:'smooth', block:'start'}});
-    el.classList.remove('booking-flash');
-    void el.offsetWidth;
-    el.classList.add('booking-flash');
-    let idsToFlash = [];
-    if (hlLines) {{
-      if (hlLines['booking']) idsToFlash = [...hlLines['booking']];
-      if (flagCat && hlLines[flagCat]) {{
-        hlLines[flagCat].forEach(id => {{ if (!idsToFlash.includes(id)) idsToFlash.push(id); }});
+  // Wait two animation frames — first frame applies display:block, second paints it
+  requestAnimationFrame(() => {{
+    requestAnimationFrame(() => {{
+      const el = document.getElementById(anchor);
+      if (!el) return;
+      el.scrollIntoView({{behavior:'instant', block:'start'}});
+      el.classList.remove('booking-flash');
+      void el.offsetWidth;
+      el.classList.add('booking-flash');
+      // Flash the specific hl lines for this flag
+      let idsToFlash = [];
+      if (hlLines) {{
+        if (hlLines['booking']) idsToFlash = [...hlLines['booking']];
+        if (flagCat && hlLines[flagCat]) {{
+          hlLines[flagCat].forEach(id => {{ if (!idsToFlash.includes(id)) idsToFlash.push(id); }});
+        }}
       }}
-    }}
-    if (idsToFlash.length) {{
-      flashHlLines(idsToFlash);
-      setTimeout(() => {{
-        const catIds = (flagCat && hlLines && hlLines[flagCat]) ? hlLines[flagCat] : idsToFlash;
-        const targetId = catIds.find(id => !id.startsWith('anchor-')) || catIds[0];
-        const targetEl = document.querySelector(`[data-hlid="${{targetId}}"]`);
-        if (targetEl) targetEl.scrollIntoView({{behavior:'smooth', block:'center'}});
-      }}, 400);
-    }}
-  }}
-  setTimeout(() => tryScroll(5), 200);
+      if (idsToFlash.length) {{
+        flashHlLines(idsToFlash);
+        // After flash starts, scroll to the specific flagged line
+        setTimeout(() => {{
+          const catIds = (flagCat && hlLines && hlLines[flagCat]) ? hlLines[flagCat] : idsToFlash;
+          const targetId = catIds.find(id => !id.startsWith('anchor-')) || catIds[0];
+          const targetEl = document.querySelector(`[data-hlid="${{targetId}}"]`);
+          if (targetEl) targetEl.scrollIntoView({{behavior:'smooth', block:'center'}});
+        }}, 300);
+      }}
+    }});
+  }});
 }}
 
 function render(filterCat) {{
