@@ -2020,7 +2020,7 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
 .no-results{{text-align:center;padding:48px;color:#94a3b8;font-size:14px}}
 
 /* ── Full report — PDF-style layout ── */
-#section-report{{display:none;padding:20px 24px;background:#525659;overflow-x:auto;zoom:110%}}
+#section-report{{display:none;padding:20px 24px;background:#525659;overflow-x:auto}}
 #section-summary{{zoom:100%}}
 .report-page{{position:relative;margin:0 auto 16px auto;box-shadow:0 4px 16px rgba(0,0,0,.4);display:block;overflow:hidden}}
 .booking-anchor{{scroll-margin-top:80px}}
@@ -2575,35 +2575,34 @@ function flashHlLines(hlIds) {{
 }}
 
 function goToBooking(anchor, flagCat, hlLines) {{
+  const hl = hlLines || HLMAP[anchor] || {{}};
   showSection('report');
   clearHlFlash();
-  // rAF ensures display:block is applied, then setTimeout(50) lets browser reflow
   requestAnimationFrame(() => {{
     setTimeout(() => {{
+      // Force layout recalculation
+      document.getElementById('section-report').offsetHeight;
       const el = document.getElementById(anchor);
       if (!el) return;
       el.scrollIntoView({{behavior:'instant', block:'start'}});
       el.classList.remove('booking-flash');
       void el.offsetWidth;
       el.classList.add('booking-flash');
-      // Build list of hl-line IDs to flash
       let idsToFlash = [];
-      if (hlLines) {{
-        if (hlLines['booking']) idsToFlash = [...hlLines['booking']];
-        if (flagCat && hlLines[flagCat]) {{
-          hlLines[flagCat].forEach(id => {{ if (!idsToFlash.includes(id)) idsToFlash.push(id); }});
-        }}
+      if (hl['booking']) idsToFlash = [...hl['booking']];
+      if (flagCat && hl[flagCat]) {{
+        hl[flagCat].forEach(id => {{ if (!idsToFlash.includes(id)) idsToFlash.push(id); }});
       }}
       if (idsToFlash.length) {{
         flashHlLines(idsToFlash);
         setTimeout(() => {{
-          const catIds = (flagCat && hlLines && hlLines[flagCat]) ? hlLines[flagCat] : idsToFlash;
+          const catIds = (flagCat && hl[flagCat]) ? hl[flagCat] : idsToFlash;
           const targetId = catIds.find(id => !id.startsWith('anchor-')) || catIds[0];
           const targetEl = document.querySelector(`[data-hlid="${{targetId}}"]`);
           if (targetEl) targetEl.scrollIntoView({{behavior:'smooth', block:'center'}});
         }}, 300);
       }}
-    }}, 50);
+    }}, 250);
   }});
 }}
 
@@ -2692,8 +2691,10 @@ function render(filterCat) {{
       else if (/potential lqa/.test(fl)) cat='lqa';
       else if (/payment not received/.test(fl)) cat='paymissing';
       else if (/ek|ey|qr|g9|ku|gf|sq|ai|6e/.test(fl)) cat='flight';
+      const _a = g.anchor;
+      const _c = cat;
       return `<span class="flag" style="${{flagColor(f)}}" title="Jump to related lines in report"
-        data-anchor="${{g.anchor}}" data-cat="${{cat}}">${{f}}</span>`;
+        onclick="goToBooking('${{_a}}','${{_c}}',HLMAP['${{_a}}'])">${{f}}</span>`;
     }}).join('');
 
     tr.innerHTML = `
@@ -2802,17 +2803,6 @@ function updateGHACount() {{
 }}
 
 render('all');
-
-// ── Flag badge click delegation ───────────────────────────────
-// Handles clicks on flag spans which use data-anchor + data-cat attributes
-document.getElementById('tbody').addEventListener('click', function(e) {{
-  const flag = e.target.closest('.flag[data-anchor]');
-  if (!flag) return;
-  const anchor  = flag.dataset.anchor;
-  const cat     = flag.dataset.cat;
-  const hlLines = HLMAP[anchor] || {{}};
-  goToBooking(anchor, cat, hlLines);
-}});
 </script>
 </body>
 </html>'''
