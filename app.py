@@ -3255,19 +3255,18 @@ st.markdown("---")
 
 # ── Sidebar: API settings ─────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### 🔑 API Settings")
-    aerodatabox_key = st.text_input(
-        "AeroDataBox API Key",
-        value=st.session_state.get('aerodatabox_key', ''),
-        type="password",
-        help="RapidAPI key for AeroDataBox — used to auto-fill missing ETAs",
-        placeholder="Paste your RapidAPI key here"
-    )
-    if aerodatabox_key:
-        st.session_state['aerodatabox_key'] = aerodatabox_key
-        st.success("✅ API key saved")
+    st.markdown("### ⚙️ Settings")
+    # AeroDataBox key — loaded from Streamlit secrets, invisible to users
+    _adb_key = ''
+    try:
+        _adb_key = st.secrets.get('AERODATABOX_KEY', '')
+    except Exception:
+        pass
+    if _adb_key:
+        st.session_state['aerodatabox_key'] = _adb_key
+        st.caption("✈️ ETA auto-fill: active")
     else:
-        st.caption("No key — missing ETAs will not be auto-filled")
+        st.caption("✈️ ETA auto-fill: not configured")
 
 col_left, col_right = st.columns([1, 2])
 
