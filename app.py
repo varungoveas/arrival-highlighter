@@ -2105,7 +2105,7 @@ tr.dimmed{{opacity:.2;transition:opacity .2s}}
   </div>
 </div>
 
-<div id="section-report">
+<div id="section-report" style="display:none">
 {report_html}
 </div>
 
@@ -2577,16 +2577,16 @@ function flashHlLines(hlIds) {{
 function goToBooking(anchor, flagCat, hlLines) {{
   showSection('report');
   clearHlFlash();
-  // Wait two animation frames — first frame applies display:block, second paints it
+  // rAF ensures display:block is applied, then setTimeout(50) lets browser reflow
   requestAnimationFrame(() => {{
-    requestAnimationFrame(() => {{
+    setTimeout(() => {{
       const el = document.getElementById(anchor);
       if (!el) return;
       el.scrollIntoView({{behavior:'instant', block:'start'}});
       el.classList.remove('booking-flash');
       void el.offsetWidth;
       el.classList.add('booking-flash');
-      // Flash the specific hl lines for this flag
+      // Build list of hl-line IDs to flash
       let idsToFlash = [];
       if (hlLines) {{
         if (hlLines['booking']) idsToFlash = [...hlLines['booking']];
@@ -2596,7 +2596,6 @@ function goToBooking(anchor, flagCat, hlLines) {{
       }}
       if (idsToFlash.length) {{
         flashHlLines(idsToFlash);
-        // After flash starts, scroll to the specific flagged line
         setTimeout(() => {{
           const catIds = (flagCat && hlLines && hlLines[flagCat]) ? hlLines[flagCat] : idsToFlash;
           const targetId = catIds.find(id => !id.startsWith('anchor-')) || catIds[0];
@@ -2604,7 +2603,7 @@ function goToBooking(anchor, flagCat, hlLines) {{
           if (targetEl) targetEl.scrollIntoView({{behavior:'smooth', block:'center'}});
         }}, 300);
       }}
-    }});
+    }}, 50);
   }});
 }}
 
