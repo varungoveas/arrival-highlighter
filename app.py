@@ -384,9 +384,36 @@ def highlight_pdf(pdf_bytes, enabled_cats):
             words = [w for w in page.extract_words(x_tolerance=2, y_tolerance=2)
                      if w['top'] < ph * 0.91]
             processed = set()
+
+            # ── Collect booking rows: allocated (room number) + unallocated ──
+            # Allocated: word at x0<40 matching 1-4 digits
+            # Unallocated: no room number but has a guest name at x0 41-280
+            #              AND a conf number on the sub-row below
+            booking_rows = []
             for rw in [w for w in words if w['x0'] < 40
                        and re.match(r'^[0-9]{1,4}$', w['text'])]:
-                t  = rw['top']
+                booking_rows.append((rw['top'], rw['text']))
+
+            # Detect unallocated — look for name rows (x0 41-280, starts with letter or *)
+            # that don't already have a room number at the same y
+            allocated_tops = {round(t) for t, _ in booking_rows}
+            for w in words:
+                if not (41 <= w['x0'] <= 90):
+                    continue
+                if not re.match(r'^[A-Z\*]', w['text']):
+                    continue
+                rk = round(w['top'])
+                if rk in allocated_tops or rk in processed:
+                    continue
+                # Check there's a conf number below this row
+                conf_check = next((cw for cw in words
+                                   if cw['top'] > w['top']+3 and cw['top'] < w['top']+25
+                                   and 35 <= cw['x0'] <= 180
+                                   and re.match(r'^[0-9]{6,}$', cw['text'])), None)
+                if conf_check:
+                    booking_rows.append((w['top'], 'UNALLOC'))
+
+            for t, room_text in sorted(booking_rows, key=lambda x: x[0]):
                 rk = round(t)
                 if rk in processed: continue
                 processed.add(rk)
@@ -402,7 +429,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 has_star  = bool(name and name['text'].startswith('*'))
                 is_sharer = has_star and adl_val == 0
                 all_bookings.append({
-                    'room':      rw['text'],
+                    'room':      room_text,
                     'conf':      conf['text'] if conf else '',
                     'pg_idx':    pg_idx,
                     'row_top':   t,
@@ -636,9 +663,10 @@ def highlight_pdf(pdf_bytes, enabled_cats):
             # Room / Name / Conf No — skip sharers entirely
             if enabled_cats.get('roomno'):
                 processed = set()
-                for rw in [w for w in words if w['x0'] < 40
-                           and re.match(r'^[0-9]{1,4}$', w['text'])]:
-                    t  = rw['top']
+                # Build booking rows list including unallocated
+                _bk_rows = [(b['row_top'], b['room']) for b in all_bookings
+                            if b['pg_idx'] == pg_idx]
+                for t, room_text in sorted(_bk_rows, key=lambda x: x[0]):
                     rk = round(t)
                     if rk in processed: continue
                     # Skip sharer rows
@@ -655,11 +683,16 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                     if not name: continue
                     processed.add(rk)
 
-                    together = room_to_group.get(rw['text'], [])
+                    together = room_to_group.get(room_text, [])
                     popup = ('👥 Travelling Together with Room(s): ' +
                              ', '.join(together)) if together else None
 
-                    hl(rw['x0'], rw['top'], rw['x1'], rw['bottom'], 'roomno', YELLOW, popup)
+                    # Highlight room number word if it exists (not for UNALLOC)
+                    rw_word = next((w for w in row if w['x0'] < 40
+                                    and re.match(r'^[0-9]{1,4}$', w['text'])), None)
+                    if rw_word:
+                        hl(rw_word['x0'], rw_word['top'], rw_word['x1'], rw_word['bottom'],
+                           'roomno', YELLOW, popup)
                     hl(min(w['x0'] for w in name), min(w['top'] for w in name),
                        max(w['x1'] for w in name), max(w['bottom'] for w in name),
                        'roomno', YELLOW, popup)
@@ -721,9 +754,10 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                                key=lambda x: x['row_top'])
 
             processed_s = set()
-            for rw in [w for w in words if w['x0'] < 40
-                       and re.match(r'^[0-9]{1,4}$', w['text'])]:
-                t  = rw['top']
+            # Include unallocated rooms from all_bookings
+            _bk_rows4 = [(b['row_top'], b['room']) for b in all_bookings
+                         if b['pg_idx'] == pg_idx]
+            for t, room_text in sorted(_bk_rows4, key=lambda x: x[0]):
                 rk = round(t)
                 if rk in processed_s: continue
                 processed_s.add(rk)
@@ -1023,7 +1057,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 chl_w = next((w for w in row if 437 <= w['x0'] <= 460 and w['text'].isdigit()), None)
                 if chl_w and int(chl_w['text']) > 0:
                     bflags.append(f"Child ×{chl_w['text']}")
-                together = room_to_group.get(rw['text'], [])
+                together = room_to_group.get(room_text, [])
                 if together:
                     bflags.append(f"Together: {', '.join(together)}")
 
@@ -1070,7 +1104,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 # A booking is "sharer missing" if NO adl=0 row exists for
                 # this room number anywhere in the entire PDF (all_bookings)
                 _room_has_sharer = any(
-                    b['room'] == rw['text'] and b['is_sharer']
+                    b['room'] == room_text and b['is_sharer']
                     for b in all_bookings
                 )
                 if not _room_has_sharer:
@@ -1213,7 +1247,7 @@ def highlight_pdf(pdf_bytes, enabled_cats):
                 note = ' // '.join(note_lines[:15]) if note_lines else ''
 
                 summary_guests.append({
-                    'room':       rw['text'],
+                    'room':       room_text,
                     'name':       ' '.join(w['text'] for w in row if 41 <= w['x0'] <= 280)[:30],
                     'conf':       conf['text'] if conf else '',
                     'ta':         ta_name[:30],
@@ -2397,8 +2431,12 @@ function renderPayment() {{
   PAY_MISSING.forEach((g, idx) => {{
     const tr = document.createElement('tr');
     tr.style.background = idx%2===0 ? '#fff' : '#fafbfd';
+    const roomDisplay = g.room === 'UNALLOC'
+      ? `<span style="background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;
+                      padding:2px 7px;border-radius:4px;white-space:nowrap">⚠ No Room</span>`
+      : g.room;
     tr.innerHTML = `
-      <td style="padding:9px 12px;font-weight:700;font-size:14px;color:#1a1a2e;vertical-align:top">${{g.room}}</td>
+      <td style="padding:9px 12px;font-weight:700;font-size:14px;color:#1a1a2e;vertical-align:top">${{roomDisplay}}</td>
       <td style="padding:9px 12px;vertical-align:top">
         <div style="font-weight:600;color:#1e2535">${{g.name}}</div>
       </td>
